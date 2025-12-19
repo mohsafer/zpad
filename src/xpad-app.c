@@ -104,39 +104,21 @@ static void     xpad_dialog_emit_response   (GtkWidget *widget, gpointer user_da
 static void
 xpad_app_init (int argc, char **argv)
 {
-/* We do this check at the first idle rather than immediately during
-   start because we want to give the tray time to become embedded. */
-	if (!xpad_tray_is_open () &&
-	    xpad_pad_group_num_visible_pads (group) == 0)
-	{
-		if (pads_loaded_on_start > 0)
-		{
-			/* So we loaded xpad, there's no tray, and there's only hidden
-			   pads...  Probably previously had tray open but we failed
-			   this time.  Show all pads as a last resort.  This shouldn't
-			   happen in normal operation. */
-			xpad_pad_group_show_all (group);
-		}
-		else
-		{
-			exit (0);
-		}
-	}
+	gboolean first_time;
+	gboolean have_gtk;
 
-	return G_SOURCE_REMOVE;
-	
-	/* Set up config directory. */
+	have_gtk = gtk_init_check (&argc, &argv);
+	xpad_argc = argc;
+	xpad_argv = argv;
+	output = stdout;
+
 	first_time = !config_dir_exists ();
 	config_dir = make_config_dir ();
-	
-	/* create master socket name */
+
 	server_filename = g_build_filename (xpad_app_get_config_dir (), "server", NULL);
-	
+
 	if (!have_gtk)
 	{
-		/* We don't have GTK+, but we can still do
-		   --version or --help and such.  Plus, we
-		   can pass commands to a remote instance. */
 		process_local_args (&xpad_argc, &xpad_argv);
 		if (!xpad_app_pass_args ())
 		{
@@ -145,49 +127,47 @@ xpad_app_init (int argc, char **argv)
 		}
 		exit (0);
 	}
-	
+
 	g_set_application_name (_("Xpad"));
-	
-	/* GTK4 has built-in transparency support through compositing */
+
 	xpad_translucent = TRUE;
-	
-	/* Set up program path. */
+
 	if (xpad_argc > 0)
 		program_path = g_find_program_in_path (xpad_argv[0]);
 	else
 		program_path = NULL;
-	
+
 	process_local_args (&xpad_argc, &xpad_argv);
-	
+
 	if (xpad_app_pass_args ())
 		exit (0);
-	
-	/* Race condition here, between calls */
+
 	xpad_app_open_proc_file ();
-	
+
 	register_stock_icons ();
 	gtk_window_set_default_icon_name (PACKAGE);
-	
-	pad_group = xpad_pad_group_new();
+
+	pad_group = xpad_pad_group_new ();
 	process_remote_args (&xpad_argc, &xpad_argv, TRUE);
-	
+
 	xpad_tray_open ();
 	xpad_session_manager_init ();
-	
-	/* load all pads */
+
 	pads_loaded_on_start = xpad_app_load_pads ();
-	if (pads_loaded_on_start == 0 && !option_new) {
-		if (!option_nonew) {
+	if (pads_loaded_on_start == 0 && !option_new)
+	{
+		if (!option_nonew)
+		{
 			GtkWidget *pad = xpad_pad_new (pad_group);
 			gtk_widget_set_visible (pad, TRUE);
 		}
 	}
-	
-	g_idle_add ((GSourceFunc)xpad_app_first_idle_check, pad_group);
-	
+
+	g_idle_add ((GSourceFunc) xpad_app_first_idle_check, pad_group);
+
 	if (first_time)
 		show_help ();
-	
+
 	g_free (server_filename);
 	server_filename = NULL;
 }
@@ -519,14 +499,20 @@ xpad_app_first_idle_check (XpadPadGroup *group)
 	    xpad_pad_group_num_visible_pads (group) == 0)
 	{
 		if (pads_loaded_on_start > 0)
+		{
 			/* So we loaded xpad, there's no tray, and there's only hidden
 			   pads...  Probably previously had tray open but we failed
 			   this time.  Show all pads as a last resort.  This shouldn't
 			   happen in normal operation. */
 			xpad_pad_group_show_all (group);
+		}
 		else
 		{
-		exit (0);
+			exit (0);
+		}
+	}
+
+	return G_SOURCE_REMOVE;
 }
 
 
