@@ -65,7 +65,7 @@ void xpad_pad_properties_set_text_color (XpadPadProperties *pad_properties, cons
 const GdkRGBA *xpad_pad_properties_get_text_color (XpadPadProperties *pad_properties);
 
 void xpad_pad_properties_set_fontname (XpadPadProperties *pad_properties, const gchar *fontname);
-G_CONST_RETURN gchar *xpad_pad_properties_get_fontname (XpadPadProperties *pad_properties);
+const gchar *xpad_pad_properties_get_fontname (XpadPadProperties *pad_properties);
 
 G_END_DECLS
 

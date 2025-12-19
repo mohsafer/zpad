@@ -95,7 +95,7 @@ static const XpadToolbarButton buttons[] =
 };
 
 
-static G_CONST_RETURN XpadToolbarButton *xpad_toolbar_button_lookup (XpadToolbar *toolbar, const gchar *name);
+static const XpadToolbarButton *xpad_toolbar_button_lookup (XpadToolbar *toolbar, const gchar *name);
 static GtkToolItem *xpad_toolbar_button_to_item (XpadToolbar *toolbar, const XpadToolbarButton *button);
 static void xpad_toolbar_button_activated (GtkToolButton *button);
 static void xpad_toolbar_change_buttons (XpadToolbar *toolbar);

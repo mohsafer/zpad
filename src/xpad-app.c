@@ -218,7 +218,7 @@ xpad_app_error (GtkWindow *parent, const gchar *primary, const gchar *secondary)
 
 
 
-G_CONST_RETURN gchar *
+const gchar *
 xpad_app_get_config_dir (void)
 {
 	return config_dir;
@@ -226,7 +226,7 @@ xpad_app_get_config_dir (void)
 
 
 /* Returns absolute path to our own executable. May be NULL. */
-G_CONST_RETURN gchar *
+const gchar *
 xpad_app_get_program_path (void)
 {
 	return program_path;
@@ -429,7 +429,7 @@ xpad_app_load_pads (void)
 {
 	gint opened = 0;
 	GDir *dir;
-	G_CONST_RETURN gchar *name;
+	const gchar *name;
 	
 	g_signal_connect (pad_group, "pad-added", G_CALLBACK (xpad_app_pad_added), NULL);
 	

@@ -331,7 +331,7 @@ xpad_pad_properties_set_fontname (XpadPadProperties *prop, const gchar *fontname
 	g_object_notify (G_OBJECT (prop), "fontname");
 }
 
-G_CONST_RETURN gchar *xpad_pad_properties_get_fontname (XpadPadProperties *prop)
+const gchar *xpad_pad_properties_get_fontname (XpadPadProperties *prop)
 {
 	return gtk_font_button_get_font_name (GTK_FONT_BUTTON (prop->priv->fontbutton));
 }

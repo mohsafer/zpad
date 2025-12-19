@@ -81,9 +81,9 @@ _("Please send comments or bug reports to "
 	gtk_box_append (GTK_BOX (content_area), helptext);
 	button = gtk_dialog_add_button (GTK_DIALOG(dialog), _("Close"), GTK_RESPONSE_CLOSE);
 	
-	g_signal_connect (GTK_OBJECT (dialog), "destroy", 
+	g_signal_connect (dialog, "destroy", 
 		G_CALLBACK (help_close), NULL);
-	g_signal_connect_swapped (GTK_OBJECT (button), "clicked", 
+	g_signal_connect_swapped (button, "clicked", 
 		G_CALLBACK (gtk_window_destroy), dialog);
 	
 	gtk_window_set_resizable (GTK_WINDOW (dialog), FALSE);

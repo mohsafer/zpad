@@ -515,7 +515,7 @@ gboolean xpad_settings_remove_last_toolbar_button (XpadSettings *settings)
 	return TRUE;
 }
 
-G_CONST_RETURN GSList *xpad_settings_get_toolbar_buttons (XpadSettings *settings)
+const GSList *xpad_settings_get_toolbar_buttons (XpadSettings *settings)
 {
 	return settings->priv->toolbar_buttons;
 }
@@ -535,7 +535,7 @@ void xpad_settings_set_back_color (XpadSettings *settings, const GdkRGBA *back)
 	g_object_notify (G_OBJECT (settings), "back_color");
 }
 
-G_CONST_RETURN GdkRGBA *xpad_settings_get_back_color (XpadSettings *settings)
+const GdkRGBA *xpad_settings_get_back_color (XpadSettings *settings)
 {
 	return settings->priv->back;
 }
@@ -555,7 +555,7 @@ void xpad_settings_set_text_color (XpadSettings *settings, const GdkRGBA *text)
 	g_object_notify (G_OBJECT (settings), "text_color");
 }
 
-G_CONST_RETURN GdkRGBA *xpad_settings_get_text_color (XpadSettings *settings)
+const GdkRGBA *xpad_settings_get_text_color (XpadSettings *settings)
 {
 	return settings->priv->text;
 }
@@ -570,7 +570,7 @@ void xpad_settings_set_fontname (XpadSettings *settings, const gchar *fontname)
 	g_object_notify (G_OBJECT (settings), "fontname");
 }
 
-G_CONST_RETURN gchar *xpad_settings_get_fontname (XpadSettings *settings)
+const gchar *xpad_settings_get_fontname (XpadSettings *settings)
 {
 	return settings->priv->fontname;
 }

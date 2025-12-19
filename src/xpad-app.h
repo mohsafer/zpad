@@ -27,8 +27,8 @@ G_BEGIN_DECLS
 void       xpad_app_error     (GtkWindow *parent, const gchar *primary, const gchar *secondary);
 GtkWidget *xpad_app_alert_new (GtkWindow *parent, const gchar *stock, const gchar *primary, const gchar *secondary);
 
-G_CONST_RETURN gchar *xpad_app_get_config_dir (void);
-G_CONST_RETURN gchar *xpad_app_get_program_path (void);
+const gchar *xpad_app_get_config_dir (void);
+const gchar *xpad_app_get_program_path (void);
 XpadPadGroup         *xpad_app_get_pad_group (void);
 gboolean              xpad_app_get_translucent (void);
 
