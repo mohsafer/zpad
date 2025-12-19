@@ -38,8 +38,8 @@ struct XpadSettingsPrivate
 	gboolean has_toolbar;
 	gboolean autohide_toolbar;
 	gboolean has_scrollbar;
-	GdkColor *back;
-	GdkColor *text;
+	GdkRGBA *back;
+	GdkRGBA *text;
 	gchar *fontname;
 	GSList *toolbar_buttons;
 };
@@ -187,7 +187,7 @@ xpad_settings_class_init (XpadSettingsClass *klass)
 	                                 g_param_spec_boxed ("text_color",
 	                                                     "Text Color",
 	                                                     "Default color of pad text",
-	                                                     GDK_TYPE_COLOR,
+	                                                     GDK_TYPE_RGBA,
 	                                                     G_PARAM_READWRITE));
 	
 	g_object_class_install_property (gobject_class,
@@ -195,7 +195,7 @@ xpad_settings_class_init (XpadSettingsClass *klass)
 	                                 g_param_spec_boxed ("back_color",
 	                                                     "Back Color",
 	                                                     "Default color of pad background",
-	                                                     GDK_TYPE_COLOR,
+	                                                     GDK_TYPE_RGBA,
 	                                                     G_PARAM_READWRITE));
 	
 	/* Signals */
@@ -214,24 +214,24 @@ xpad_settings_class_init (XpadSettingsClass *klass)
 static void
 xpad_settings_init (XpadSettings *settings)
 {
-	GdkColor back, text;
+	GdkRGBA back, text;
 	
 	settings->priv = XPAD_SETTINGS_GET_PRIVATE (settings);
 	
 	/* A pleasant light yellow color, similar to 
 	   commercial sticky notes. */
-	back.pixel = 0;
-	back.red = 65535;
-	back.green = 61166;
-	back.blue = 39321;
-	settings->priv->back = gdk_color_copy (&back);
+	back.red = 1.0;
+	back.green = 0.9333;
+	back.blue = 0.6;
+	back.alpha = 1.0;
+	settings->priv->back = gdk_rgba_copy (&back);
 	
 	/* Black */
-	text.pixel = 0;
-	text.red = 0;
-	text.green = 0;
-	text.blue = 0;
-	settings->priv->text = gdk_color_copy (&text);
+	text.red = 0.0;
+	text.green = 0.0;
+	text.blue = 0.0;
+	text.alpha = 1.0;
+	settings->priv->text = gdk_rgba_copy (&text);
 	
 	settings->priv->width = 200;
 	settings->priv->height = 200;
@@ -258,8 +258,8 @@ xpad_settings_finalize (GObject *object)
 	XpadSettings *settings = XPAD_SETTINGS (object);
 	
 	g_slist_free (settings->priv->toolbar_buttons);
-	gdk_color_free (settings->priv->text);
-	gdk_color_free (settings->priv->back);
+	gdk_rgba_free (settings->priv->text);
+	gdk_rgba_free (settings->priv->back);
 	g_free (settings->priv->fontname);
 	
 	G_OBJECT_CLASS (xpad_settings_parent_class)->finalize (object);
@@ -520,13 +520,13 @@ G_CONST_RETURN GSList *xpad_settings_get_toolbar_buttons (XpadSettings *settings
 	return settings->priv->toolbar_buttons;
 }
 
-void xpad_settings_set_back_color (XpadSettings *settings, const GdkColor *back)
+void xpad_settings_set_back_color (XpadSettings *settings, const GdkRGBA *back)
 {
 	if (settings->priv->back)
-		gdk_color_free (settings->priv->back);
+		gdk_rgba_free (settings->priv->back);
 	
 	if (back)
-		settings->priv->back = gdk_color_copy (back);
+		settings->priv->back = gdk_rgba_copy (back);
 	else
 		settings->priv->back = NULL;
 	
@@ -535,18 +535,18 @@ void xpad_settings_set_back_color (XpadSettings *settings, const GdkColor *back)
 	g_object_notify (G_OBJECT (settings), "back_color");
 }
 
-G_CONST_RETURN GdkColor *xpad_settings_get_back_color (XpadSettings *settings)
+G_CONST_RETURN GdkRGBA *xpad_settings_get_back_color (XpadSettings *settings)
 {
 	return settings->priv->back;
 }
 
-void xpad_settings_set_text_color (XpadSettings *settings, const GdkColor *text)
+void xpad_settings_set_text_color (XpadSettings *settings, const GdkRGBA *text)
 {
 	if (settings->priv->text)
-		gdk_color_free (settings->priv->text);
+		gdk_rgba_free (settings->priv->text);
 	
 	if (text)
-		settings->priv->text = gdk_color_copy (text);
+		settings->priv->text = gdk_rgba_copy (text);
 	else
 		settings->priv->text = NULL;
 	
@@ -555,7 +555,7 @@ void xpad_settings_set_text_color (XpadSettings *settings, const GdkColor *text)
 	g_object_notify (G_OBJECT (settings), "text_color");
 }
 
-G_CONST_RETURN GdkColor *xpad_settings_get_text_color (XpadSettings *settings)
+G_CONST_RETURN GdkRGBA *xpad_settings_get_text_color (XpadSettings *settings)
 {
 	return settings->priv->text;
 }

@@ -37,14 +37,13 @@ static void xpad_text_view_set_property (GObject *object, guint prop_id, const G
 static void xpad_text_view_get_property (GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static void xpad_text_view_realize (XpadTextView *widget);
 static void xpad_text_view_finalize (GObject *object);
-static gboolean xpad_text_view_button_press_event (GtkWidget *widget, GdkEventButton *event);
-static gboolean xpad_text_view_focus_out_event (GtkWidget *widget, GdkEventFocus *event);
+static void xpad_text_view_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadTextView *view);
+static gboolean xpad_text_view_focus_out (GtkEventControllerFocus *controller, XpadTextView *view);
 static void xpad_text_view_notify_edit_lock (XpadTextView *view);
 static void xpad_text_view_notify_editable (XpadTextView *view);
 static void xpad_text_view_notify_fontname (XpadTextView *view);
 static void xpad_text_view_notify_text_color (XpadTextView *view);
 static void xpad_text_view_notify_back_color (XpadTextView *view);
-static void xpad_text_view_style_set (GtkWidget *widget, GtkStyle *previous_style);
 
 enum
 {
@@ -104,17 +103,27 @@ xpad_text_view_init (XpadTextView *view)
 	gtk_text_view_set_buffer (GTK_TEXT_VIEW (view), GTK_TEXT_BUFFER (view->priv->buffer));
 	
 	gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (view), GTK_WRAP_WORD);
-	gtk_container_set_border_width (GTK_CONTAINER (view), 5);
+	gtk_widget_set_margin_start (GTK_WIDGET (view), 5);
+	gtk_widget_set_margin_end (GTK_WIDGET (view), 5);
+	gtk_widget_set_margin_top (GTK_WIDGET (view), 5);
+	gtk_widget_set_margin_bottom (GTK_WIDGET (view), 5);
 	
 	name = g_strdup_printf ("%p", (void *) view);
 	gtk_widget_set_name (GTK_WIDGET (view), name);
 	g_free (name);
 	
-	g_signal_connect (view, "button-press-event", G_CALLBACK (xpad_text_view_button_press_event), NULL);
-	g_signal_connect_after (view, "focus-out-event", G_CALLBACK (xpad_text_view_focus_out_event), NULL);
+	/* Set up event controllers for GTK4 */
+	GtkGesture *click_gesture = gtk_gesture_click_new ();
+	gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click_gesture), 1);
+	g_signal_connect (click_gesture, "pressed", G_CALLBACK (xpad_text_view_button_pressed), view);
+	gtk_widget_add_controller (GTK_WIDGET (view), GTK_EVENT_CONTROLLER (click_gesture));
+	
+	GtkEventController *focus_controller = gtk_event_controller_focus_new ();
+	g_signal_connect (focus_controller, "leave", G_CALLBACK (xpad_text_view_focus_out), view);
+	gtk_widget_add_controller (GTK_WIDGET (view), focus_controller);
+	
 	g_signal_connect (view, "realize", G_CALLBACK (xpad_text_view_realize), NULL);
 	g_signal_connect (view, "notify::editable", G_CALLBACK (xpad_text_view_notify_editable), NULL);
-	g_signal_connect (view, "style-set", G_CALLBACK (xpad_text_view_style_set), NULL);
 	g_signal_connect_swapped (xpad_settings (), "notify::edit-lock", G_CALLBACK (xpad_text_view_notify_edit_lock), view);
 	view->priv->notify_font_handler = g_signal_connect_swapped (xpad_settings (), "notify::fontname", G_CALLBACK (xpad_text_view_notify_fontname), view);
 	view->priv->notify_text_handler = g_signal_connect_swapped (xpad_settings (), "notify::text-color", G_CALLBACK (xpad_text_view_notify_text_color), view);
@@ -148,37 +157,41 @@ xpad_text_view_realize (XpadTextView *view)
 }
 
 static gboolean
-xpad_text_view_focus_out_event (GtkWidget *widget, GdkEventFocus *event)
+xpad_text_view_focus_out (GtkEventControllerFocus *controller, XpadTextView *view)
 {
 	if (xpad_settings_get_edit_lock (xpad_settings ()))
 	{
-		gtk_text_view_set_editable (GTK_TEXT_VIEW (widget), FALSE);
+		gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
 		return TRUE;
 	}
 	
 	return FALSE;
 }
 
-static gboolean
-xpad_text_view_button_press_event (GtkWidget *widget, GdkEventButton *event)
+static void
+xpad_text_view_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadTextView *view)
 {
-	if (event->button == 1 &&
-	    xpad_settings_get_edit_lock (xpad_settings ()) &&
+	GtkWidget *widget = GTK_WIDGET (view);
+	if (xpad_settings_get_edit_lock (xpad_settings ()) &&
 	    !gtk_text_view_get_editable (GTK_TEXT_VIEW (widget)))
 	{
-		if (event->type == GDK_2BUTTON_PRESS)
+		if (n_press == 2)
 		{
 			gtk_text_view_set_editable (GTK_TEXT_VIEW (widget), TRUE);
-			return TRUE;
 		}
-		else if (event->type == GDK_BUTTON_PRESS)
+		else if (n_press == 1)
 		{
-			gtk_window_begin_move_drag (GTK_WINDOW (gtk_widget_get_toplevel (widget)), event->button, event->x_root, event->y_root, event->time);
-			return TRUE;
+			GdkEvent *event = gtk_event_controller_get_current_event (GTK_EVENT_CONTROLLER (gesture));
+			guint32 timestamp = gdk_event_get_time (event);
+			GtkWidget *toplevel = gtk_widget_get_root (widget);
+			GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (toplevel));
+			GdkDevice *device = gdk_event_get_device (event);
+			double root_x, root_y;
+			gdk_event_get_position (event, &root_x, &root_y);
+			
+			gdk_toplevel_begin_move (GDK_TOPLEVEL (surface), device, 1, root_x, root_y, timestamp);
 		}
 	}
-	
-	return FALSE;
 }
 
 static void
@@ -191,42 +204,43 @@ xpad_text_view_notify_edit_lock (XpadTextView *view)
 static void
 xpad_text_view_notify_editable (XpadTextView *view)
 {
-	GdkCursor *cursor;
 	gboolean editable;
 	
 	editable = gtk_text_view_get_editable (GTK_TEXT_VIEW (view));
 	gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), editable);
 	
-	cursor = editable ? gdk_cursor_new (GDK_XTERM) : NULL;
-	
-	gdk_window_set_cursor (gtk_text_view_get_window (GTK_TEXT_VIEW (view), GTK_TEXT_WINDOW_TEXT), cursor);
-	
-	if (cursor)
-		gdk_cursor_unref (cursor);
+	const gchar *cursor_name = editable ? "text" : "default";
+	gtk_widget_set_cursor_from_name (GTK_WIDGET (view), cursor_name);
 }
 
-/* Adjust the cursor to match the text color */
+/* Adjust colors using CSS for GTK4 */
 static void
-xpad_text_view_style_set (GtkWidget *widget, GtkStyle *previous_style)
+xpad_text_view_apply_colors (XpadTextView *view)
 {
-	GdkColor c;
+	const GdkRGBA *text_color = xpad_settings_get_text_color (xpad_settings ());
+	const GdkRGBA *back_color = xpad_settings_get_back_color (xpad_settings ());
 	
-	/* text color changes */
-	c = gtk_widget_get_style (widget)->text[GTK_STATE_NORMAL];
-	if (!previous_style || !gdk_color_equal (&c, &previous_style->text[GTK_STATE_NORMAL]))
+	if (text_color || back_color)
 	{
-		const gchar *name = gtk_widget_get_name (widget);
-		gchar *style_string = g_strdup_printf ("style '%s' {GtkWidget::cursor_color = {%" G_GUINT16_FORMAT ", %" G_GUINT16_FORMAT ", %" G_GUINT16_FORMAT "}} widget '*%s' style '%s'", name, c.red, c.green, c.blue, name, name);
-		gtk_rc_parse_string (style_string);
-		g_free (style_string);
-		gtk_widget_reset_rc_styles (widget);
-	}
-	
-	/* base color changes */
-	c = gtk_widget_get_style (widget)->base[GTK_STATE_NORMAL];
-	if (!previous_style || !gdk_color_equal (&c, &previous_style->base[GTK_STATE_NORMAL]))
-	{
-		gtk_widget_modify_bg (widget, GTK_STATE_NORMAL, &c);
+		gchar *css_string = g_strdup_printf (
+			"textview { color: rgba(%d,%d,%d,%.2f); background-color: rgba(%d,%d,%d,%.2f); }",
+			(int)(text_color ? text_color->red * 255 : 0),
+			(int)(text_color ? text_color->green * 255 : 0),
+			(int)(text_color ? text_color->blue * 255 : 0),
+			text_color ? text_color->alpha : 1.0,
+			(int)(back_color ? back_color->red * 255 : 0),
+			(int)(back_color ? back_color->green * 255 : 0),
+			(int)(back_color ? back_color->blue * 255 : 0),
+			back_color ? back_color->alpha : 1.0
+		);
+		
+		GtkCssProvider *provider = gtk_css_provider_new ();
+		gtk_css_provider_load_from_string (provider, css_string);
+		gtk_style_context_add_provider (gtk_widget_get_style_context (GTK_WIDGET (view)),
+		                                 GTK_STYLE_PROVIDER (provider),
+		                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		g_free (css_string);
 	}
 }
 
@@ -237,21 +251,36 @@ xpad_text_view_notify_fontname (XpadTextView *view)
 	PangoFontDescription *fontdesc;
 	
 	fontdesc = font ? pango_font_description_from_string (font) : NULL;
-	gtk_widget_modify_font (GTK_WIDGET (view), fontdesc);
+	
 	if (fontdesc)
+	{
+		gchar *css_string = g_strdup_printf (
+			"textview { font-family: %s; font-size: %dpt; }",
+			pango_font_description_get_family (fontdesc),
+			pango_font_description_get_size (fontdesc) / PANGO_SCALE
+		);
+		
+		GtkCssProvider *provider = gtk_css_provider_new ();
+		gtk_css_provider_load_from_string (provider, css_string);
+		gtk_style_context_add_provider (gtk_widget_get_style_context (GTK_WIDGET (view)),
+		                                 GTK_STYLE_PROVIDER (provider),
+		                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		g_free (css_string);
 		pango_font_description_free (fontdesc);
+	}
 }
 
 static void
 xpad_text_view_notify_text_color (XpadTextView *view)
 {
-	gtk_widget_modify_text (GTK_WIDGET (view), GTK_STATE_NORMAL, xpad_settings_get_text_color (xpad_settings ()));
+	xpad_text_view_apply_colors (view);
 }
 
 static void
 xpad_text_view_notify_back_color (XpadTextView *view)
 {
-	gtk_widget_modify_base (GTK_WIDGET (view), GTK_STATE_NORMAL, xpad_settings_get_back_color (xpad_settings ()));
+	xpad_text_view_apply_colors (view);
 }
 
 void

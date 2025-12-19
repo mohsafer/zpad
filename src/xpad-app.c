@@ -101,13 +101,12 @@ xpad_app_init (int argc, char **argv)
 	
 	/* Set up i18n */
 #ifdef ENABLE_NLS
-	gtk_set_locale ();
 	bindtextdomain (GETTEXT_PACKAGE, LOCALE_DIR);
 	bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
 	textdomain (GETTEXT_PACKAGE);
 #endif
 	
-	have_gtk = gtk_init_check (&argc, &argv);
+	have_gtk = gtk_init_check ();
 	xpad_argc = argc;
 	xpad_argv = argv;
 	output = stdout;
@@ -134,17 +133,9 @@ xpad_app_init (int argc, char **argv)
 	}
 	
 	g_set_application_name (_("Xpad"));
-	gdk_set_program_class (PACKAGE);
 	
-	/* Set up translucency. */
-/*	visual = gdk_visual_get_best_with_depth (32);
-	if (visual)
-	{
-		GdkColormap *colormap;
-		colormap = gdk_colormap_new (visual, TRUE);
-		gtk_widget_set_default_colormap (colormap);
-		xpad_translucent = TRUE;
-	}*/
+	/* GTK4 has built-in transparency support through compositing */
+	xpad_translucent = TRUE;
 	
 	/* Set up program path. */
 	if (xpad_argc > 0)
@@ -190,9 +181,13 @@ xpad_app_init (int argc, char **argv)
 
 gint main (gint argc, gchar **argv)
 {
+	GMainLoop *loop;
+	
 	xpad_app_init (argc, argv);
 	
-	gtk_main ();
+	loop = g_main_loop_new (NULL, FALSE);
+	g_main_loop_run (loop);
+	g_main_loop_unref (loop);
 	
 	return 0;
 }
@@ -213,10 +208,10 @@ xpad_app_error (GtkWindow *parent, const gchar *primary, const gchar *secondary)
 	
 	g_printerr ("%s\n", primary);
 	
-	dialog = xpad_app_alert_new (parent, GTK_STOCK_DIALOG_ERROR, primary, secondary);
-	gtk_dialog_add_buttons (GTK_DIALOG (dialog), GTK_STOCK_OK, 1, NULL);
+	dialog = xpad_app_alert_new (parent, "dialog-error", primary, secondary);
+	gtk_dialog_add_buttons (GTK_DIALOG (dialog), "OK", 1, NULL);
 	gtk_dialog_run (GTK_DIALOG (dialog));
-	gtk_widget_destroy (dialog);
+	gtk_window_destroy (GTK_WINDOW (dialog));
 	
 	xpad_session_manager_stop_interact (FALSE);
 }
@@ -392,10 +387,7 @@ xpad_app_quit_if_no_pads (XpadPadGroup *group)
 		gint num_pads = xpad_pad_group_num_visible_pads (group);
 		if (num_pads == 0)
 		{
-			if (gtk_main_level () > 0)
-				gtk_main_quit ();
-			else
-				exit (0);
+			exit (0);
 		}
 	}
 	
@@ -419,14 +411,7 @@ xpad_app_first_idle_check (XpadPadGroup *group)
 			xpad_pad_group_show_all (group);
 		else
 		{
-			if (gtk_main_level () > 0)
-				gtk_main_quit ();
-			else
-				exit (0);
-		}
-	}
-	
-	return FALSE;
+		exit (0);
 }
 
 
@@ -875,10 +860,7 @@ process_remote_args (gint *argc, gchar **argv[], gboolean have_gtk)
 		
 		if (option_quit)
 		{
-			if (have_gtk && gtk_main_level () > 0)
-				gtk_main_quit ();
-			else
-				exit (0);
+			exit (0);
 		}
 	}
 	else

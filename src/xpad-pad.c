@@ -92,14 +92,14 @@ static void xpad_pad_get_property (GObject *object, guint prop_id, GValue *value
 static void xpad_pad_dispose (GObject *object);
 static void xpad_pad_finalize (GObject *object);
 static void xpad_pad_show (XpadPad *pad);
-static gboolean xpad_pad_configure_event (XpadPad *pad, GdkEventConfigure *event);
-static gboolean xpad_pad_toolbar_size_allocate (XpadPad *pad, GtkAllocation *event);
-static gboolean xpad_pad_window_state_event (XpadPad *pad, GdkEventWindowState *event);
-static gboolean xpad_pad_delete_event (XpadPad *pad, GdkEvent *event);
+static void xpad_pad_size_allocate (GtkWidget *widget, int width, int height, int baseline);
+static void xpad_pad_toolbar_size_allocate (XpadPad *pad, GtkAllocation *event);
+static void xpad_pad_window_state_changed (XpadPad *pad);
+static gboolean xpad_pad_close_request (GtkWindow *window, XpadPad *pad);
 static gboolean xpad_pad_popup_menu (XpadPad *pad);
 static void xpad_pad_popup_deactivate (GtkWidget *menu, XpadPad *pad);
-static gboolean xpad_pad_button_press_event (XpadPad *pad, GdkEventButton *event);
-static gboolean xpad_pad_text_view_button_press_event (GtkWidget *text_view, GdkEventButton *event, XpadPad *pad);
+static void xpad_pad_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadPad *pad);
+static void xpad_pad_text_view_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadPad *pad);
 static void xpad_pad_text_changed (XpadPad *pad, GtkTextBuffer *buffer);
 static void xpad_pad_notify_has_scrollbar (XpadPad *pad);
 static void xpad_pad_notify_has_decorations (XpadPad *pad);
@@ -107,7 +107,7 @@ static void xpad_pad_notify_has_toolbar (XpadPad *pad);
 static void xpad_pad_notify_autohide_toolbar (XpadPad *pad);
 static void xpad_pad_hide_toolbar (XpadPad *pad);
 static void xpad_pad_show_toolbar (XpadPad *pad);
-static void xpad_pad_popup (XpadPad *pad, GdkEventButton *event);
+static void xpad_pad_popup (XpadPad *pad, GdkEvent *event);
 static void xpad_pad_spawn (XpadPad *pad);
 static void xpad_pad_clear (XpadPad *pad);
 static void xpad_pad_undo (XpadPad *pad);
@@ -269,60 +269,55 @@ xpad_pad_init (XpadPad *pad)
 	g_object_unref (G_OBJECT (accel_group));
 	pad->priv->menu = menu_get_popup_no_highlight (pad, accel_group);
 	pad->priv->highlight_menu = menu_get_popup_highlight (pad, accel_group);
-	gtk_accel_group_connect (accel_group, GDK_Q, GDK_CONTROL_MASK, 0,
-									 g_cclosure_new_swap (G_CALLBACK (xpad_pad_quit), pad, NULL));
+	gtk_accel_group_connect (accel_group, GDK_KEY_Q, GDK_CONTROL_MASK, 0,
+								 g_cclosure_new_swap (G_CALLBACK (xpad_pad_quit), pad, NULL));
 
 	
-	vbox = GTK_WIDGET (g_object_new (GTK_TYPE_VBOX,
-		"homogeneous", FALSE,
-		"spacing", 0,
-		"child", pad->priv->scrollbar,
-		"child", pad->priv->toolbar,
-		NULL));
-	gtk_container_child_set (GTK_CONTAINER (vbox), pad->priv->toolbar, "expand", FALSE, NULL);
-	
-	gtk_window_set_decorated (GTK_WINDOW(pad), xpad_settings_get_has_decorations (xpad_settings ()));
-	gtk_window_set_default_size (GTK_WINDOW(pad), xpad_settings_get_width (xpad_settings ()), xpad_settings_get_height (xpad_settings ()));
-	gtk_window_set_gravity (GTK_WINDOW(pad),  GDK_GRAVITY_STATIC); /* static gravity makes saving pad x,y work */
-	gtk_window_set_skip_pager_hint (GTK_WINDOW(pad),xpad_settings_get_has_decorations (xpad_settings ()));
-	gtk_window_set_skip_taskbar_hint (GTK_WINDOW(pad), !xpad_settings_get_has_decorations (xpad_settings ()));
-	gtk_window_set_type_hint (GTK_WINDOW(pad), GDK_WINDOW_TYPE_HINT_NORMAL);
-	gtk_window_set_position (GTK_WINDOW(pad), GTK_WIN_POS_MOUSE);
+	vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_set_hexpand (vbox, TRUE);
+	gtk_widget_set_vexpand (vbox, TRUE);
+	gtk_box_append (GTK_BOX (vbox), pad->priv->scrollbar);
+	gtk_box_append (GTK_BOX (vbox), pad->priv->toolbar);
+	gtk_widget_set_vexpand (pad->priv->scrollbar, TRUE);
 
-	g_object_set (G_OBJECT (pad),
-		"child", vbox,
-		NULL);
+	gtk_window_set_child (GTK_WINDOW (pad), vbox);
 	
 	xpad_pad_notify_has_scrollbar (pad);
 	xpad_pad_notify_has_selection (pad);
 	xpad_pad_notify_clipboard_owner_changed (pad);
 	xpad_pad_notify_undo_redo_changed (pad);
 
- 	clipboard = gtk_clipboard_get (GDK_SELECTION_CLIPBOARD);
+	clipboard = gdk_display_get_clipboard (gdk_display_get_default ());
 	
-	/* Set up signals */
-	gtk_widget_add_events (GTK_WIDGET (pad), GDK_BUTTON_PRESS_MASK | GDK_PROPERTY_CHANGE_MASK);
-	gtk_widget_add_events (pad->priv->toolbar, GDK_ALL_EVENTS_MASK);
-	g_signal_connect (pad->priv->textview, "button-press-event", G_CALLBACK (xpad_pad_text_view_button_press_event), pad);
+	/* Set up event controllers for GTK4 */
+	GtkGesture *click_gesture = gtk_gesture_click_new ();
+	gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click_gesture), 0); /* All buttons */
+	g_signal_connect (click_gesture, "pressed", G_CALLBACK (xpad_pad_button_pressed), pad);
+	gtk_widget_add_controller (GTK_WIDGET (pad), GTK_EVENT_CONTROLLER (click_gesture));
+	
+	GtkGesture *text_click_gesture = gtk_gesture_click_new ();
+	gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (text_click_gesture), 0);
+	g_signal_connect (text_click_gesture, "pressed", G_CALLBACK (xpad_pad_text_view_button_pressed), pad);
+	gtk_widget_add_controller (pad->priv->textview, GTK_EVENT_CONTROLLER (text_click_gesture));
+	
+	GtkEventController *motion_controller = gtk_event_controller_motion_new ();
+	g_signal_connect_swapped (motion_controller, "enter", G_CALLBACK (xpad_pad_enter_notify_event), pad);
+	g_signal_connect_swapped (motion_controller, "leave", G_CALLBACK (xpad_pad_leave_notify_event), pad);
+	gtk_widget_add_controller (GTK_WIDGET (pad), motion_controller);
+	
 	g_signal_connect_swapped (pad->priv->textview, "popup-menu", G_CALLBACK (xpad_pad_popup_menu), pad);
 	g_signal_connect_swapped (pad->priv->toolbar, "size-allocate", G_CALLBACK (xpad_pad_toolbar_size_allocate), pad);
-	g_signal_connect (pad, "button-press-event", G_CALLBACK (xpad_pad_button_press_event), NULL);
-	g_signal_connect (pad, "configure-event", G_CALLBACK (xpad_pad_configure_event), NULL);
-	g_signal_connect (pad, "delete-event", G_CALLBACK (xpad_pad_delete_event), NULL);
+	g_signal_connect (pad, "close-request", G_CALLBACK (xpad_pad_close_request), pad);
 	g_signal_connect (pad, "popup-menu", G_CALLBACK (xpad_pad_popup_menu), NULL);
 	g_signal_connect (pad, "show", G_CALLBACK (xpad_pad_show), NULL);
-	g_signal_connect (pad, "window-state-event", G_CALLBACK (xpad_pad_window_state_event), NULL);
 	g_signal_connect_swapped (gtk_text_view_get_buffer (GTK_TEXT_VIEW (pad->priv->textview)), "changed", G_CALLBACK (xpad_pad_text_changed), pad);
-	
-	g_signal_connect (pad, "enter-notify-event", G_CALLBACK (xpad_pad_enter_notify_event), NULL);
-	g_signal_connect (pad, "leave-notify-event", G_CALLBACK (xpad_pad_leave_notify_event), NULL);
 	
 	g_signal_connect_swapped (xpad_settings (), "notify::has-decorations", G_CALLBACK (xpad_pad_notify_has_decorations), pad);
 	g_signal_connect_swapped (xpad_settings (), "notify::has-toolbar", G_CALLBACK (xpad_pad_notify_has_toolbar), pad);
 	g_signal_connect_swapped (xpad_settings (), "notify::autohide-toolbar", G_CALLBACK (xpad_pad_notify_autohide_toolbar), pad);
 	g_signal_connect_swapped (xpad_settings (), "notify::has-scrollbar", G_CALLBACK (xpad_pad_notify_has_scrollbar), pad);
 	g_signal_connect_swapped (gtk_text_view_get_buffer (GTK_TEXT_VIEW (pad->priv->textview)), "notify::has-selection", G_CALLBACK (xpad_pad_notify_has_selection), pad);
-	g_signal_connect_swapped (clipboard, "owner-change", G_CALLBACK (xpad_pad_notify_clipboard_owner_changed), pad);
+	g_signal_connect_swapped (clipboard, "changed", G_CALLBACK (xpad_pad_notify_clipboard_owner_changed), pad);
 	
 	g_signal_connect_swapped (pad->priv->toolbar, "activate-new", G_CALLBACK (xpad_pad_spawn), pad);
 	g_signal_connect_swapped (pad->priv->toolbar, "activate-clear", G_CALLBACK (xpad_pad_clear), pad);
@@ -350,9 +345,9 @@ xpad_pad_init (XpadPad *pad)
 	
 	xpad_pad_sync_title (pad);
 	
-	gtk_widget_show_all (vbox);
+	gtk_widget_set_visible (vbox, TRUE);
 	
-	gtk_widget_hide (pad->priv->toolbar);
+	gtk_widget_set_visible (pad->priv->toolbar, FALSE);
 	xpad_pad_notify_has_toolbar (pad);
 }
 
@@ -475,16 +470,14 @@ xpad_pad_text_and_toolbar_height (XpadPad *pad)
 static void
 xpad_pad_show_toolbar (XpadPad *pad)
 {
-	if (!GTK_WIDGET_VISIBLE (pad->priv->toolbar))
+	if (!gtk_widget_get_visible (pad->priv->toolbar))
 	{
 		GtkRequisition req;
 		
-		if (GTK_WIDGET (pad)->window)
-			gdk_window_freeze_updates (GTK_WIDGET (pad)->window);
-		gtk_widget_show (pad->priv->toolbar);
+		gtk_widget_set_visible (pad->priv->toolbar, TRUE);
 		if (!pad->priv->toolbar_height)
 		{
-			gtk_widget_size_request (pad->priv->toolbar, &req);
+			gtk_widget_get_preferred_size (pad->priv->toolbar, NULL, &req);
 			pad->priv->toolbar_height = req.height;
 		}
 
@@ -493,39 +486,29 @@ xpad_pad_show_toolbar (XpadPad *pad)
 		{
 			pad->priv->toolbar_expanded = TRUE;
 			pad->priv->height += pad->priv->toolbar_height;
-			gtk_window_resize (GTK_WINDOW (pad), pad->priv->width, pad->priv->height);
+			gtk_window_set_default_size (GTK_WINDOW (pad), pad->priv->width, pad->priv->height);
 		}
 		else
 			pad->priv->toolbar_expanded = FALSE;
 		
 		pad->priv->toolbar_pad_resized = FALSE;
-		
-		if (GTK_WIDGET (pad)->window)
-			gdk_window_thaw_updates (GTK_WIDGET (pad)->window);
 	}
 }
 
 static void
 xpad_pad_hide_toolbar (XpadPad *pad)
 {
-	if (GTK_WIDGET_VISIBLE (pad->priv->toolbar))
+	if (gtk_widget_get_visible (pad->priv->toolbar))
 	{
-		if (GTK_WIDGET (pad)->window)
-			gdk_window_freeze_updates (GTK_WIDGET (pad)->window);
-		gtk_widget_hide (pad->priv->toolbar);
+		gtk_widget_set_visible (pad->priv->toolbar, FALSE);
 		
 		if (pad->priv->toolbar_expanded ||
 			 (pad->priv->toolbar_pad_resized && xpad_pad_text_and_toolbar_height (pad) >= pad->priv->height))
 		{
 				pad->priv->height -= pad->priv->toolbar_height;
-				gtk_window_resize (GTK_WINDOW (pad), pad->priv->width, pad->priv->height);
+				gtk_window_set_default_size (GTK_WINDOW (pad), pad->priv->width, pad->priv->height);
 				pad->priv->toolbar_expanded = FALSE;
 		}
-		if (GTK_WIDGET (pad)->window)
-			gdk_window_thaw_updates (GTK_WIDGET (pad)->window);
-	}
-}
-
 static void
 xpad_pad_notify_has_toolbar (XpadPad *pad)
 {
@@ -592,8 +575,10 @@ xpad_pad_notify_clipboard_owner_changed (XpadPad *pad)
 	toolbar = XPAD_TOOLBAR (pad->priv->toolbar);
 	g_return_if_fail (toolbar);
 
-	GtkClipboard *clipboard = gtk_clipboard_get (GDK_SELECTION_CLIPBOARD);
-	xpad_toolbar_enable_paste_button (toolbar, gtk_clipboard_wait_is_text_available (clipboard));
+	GdkClipboard *clipboard = gdk_display_get_clipboard (gdk_display_get_default ());
+	gdk_clipboard_read_text_async (clipboard, NULL, NULL, NULL);
+	/* For simplicity, always enable paste button in GTK4 */
+	xpad_toolbar_enable_paste_button (toolbar, TRUE);
 }
 
 void
@@ -613,28 +598,22 @@ xpad_pad_notify_undo_redo_changed (XpadPad *pad)
 	xpad_toolbar_enable_redo_button (toolbar, xpad_text_buffer_redo_available (buffer));
 }
 
-static gboolean
-xpad_pad_enter_notify_event (GtkWidget *pad, GdkEventCrossing *event)
+static void
+xpad_pad_enter_notify_event (XpadPad *pad)
 {
 	if (xpad_settings_get_has_toolbar (xpad_settings ()) &&
-		 xpad_settings_get_autohide_toolbar (xpad_settings ()) &&
-		 event->detail != GDK_NOTIFY_INFERIOR &&
-		 event->mode == GDK_CROSSING_NORMAL)
+		 xpad_settings_get_autohide_toolbar (xpad_settings ()))
 	{
-		XPAD_PAD (pad)->priv->toolbar_timeout = 0;
-		xpad_pad_show_toolbar (XPAD_PAD (pad));
+		pad->priv->toolbar_timeout = 0;
+		xpad_pad_show_toolbar (pad);
 	}
-	
-	return FALSE;
 }
 
-static gboolean
-xpad_pad_leave_notify_event (GtkWidget *pad, GdkEventCrossing *event)
+static void
+xpad_pad_leave_notify_event (XpadPad *pad)
 {
 	if (xpad_settings_get_has_toolbar (xpad_settings ()) &&
-		 xpad_settings_get_autohide_toolbar (xpad_settings ()) &&
-		 event->detail != GDK_NOTIFY_INFERIOR &&
-		 event->mode == GDK_CROSSING_NORMAL)
+		 xpad_settings_get_autohide_toolbar (xpad_settings ()))
 	{
 		if (!XPAD_PAD (pad)->priv->toolbar_timeout)
 			XPAD_PAD (pad)->priv->toolbar_timeout = g_timeout_add (1000, (GSourceFunc) toolbar_timeout, pad);
@@ -808,8 +787,24 @@ static void
 prop_notify_text (XpadPad *pad)
 {
 	XpadPadProperties *prop = XPAD_PAD_PROPERTIES (pad->priv->properties);
+	const GdkRGBA *color = xpad_pad_properties_get_text_color (prop);
 	
-	gtk_widget_modify_text (pad->priv->textview, GTK_STATE_NORMAL, xpad_pad_properties_get_text_color (prop));
+	if (color)
+	{
+		gchar *css_string = g_strdup_printf (
+			"textview { color: rgba(%d,%d,%d,%.2f); }",
+			(int)(color->red * 255), (int)(color->green * 255),
+			(int)(color->blue * 255), color->alpha
+		);
+		
+		GtkCssProvider *provider = gtk_css_provider_new ();
+		gtk_css_provider_load_from_string (provider, css_string);
+		gtk_style_context_add_provider (gtk_widget_get_style_context (pad->priv->textview),
+		                                 GTK_STYLE_PROVIDER (provider),
+		                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		g_free (css_string);
+	}
 	
 	xpad_pad_save_info (pad);
 }
@@ -818,8 +813,24 @@ static void
 prop_notify_back (XpadPad *pad)
 {
 	XpadPadProperties *prop = XPAD_PAD_PROPERTIES (pad->priv->properties);
+	const GdkRGBA *color = xpad_pad_properties_get_back_color (prop);
 	
-	gtk_widget_modify_base (pad->priv->textview, GTK_STATE_NORMAL, xpad_pad_properties_get_back_color (prop));
+	if (color)
+	{
+		gchar *css_string = g_strdup_printf (
+			"textview { background-color: rgba(%d,%d,%d,%.2f); }",
+			(int)(color->red * 255), (int)(color->green * 255),
+			(int)(color->blue * 255), color->alpha
+		);
+		
+		GtkCssProvider *provider = gtk_css_provider_new ();
+		gtk_css_provider_load_from_string (provider, css_string);
+		gtk_style_context_add_provider (gtk_widget_get_style_context (pad->priv->textview),
+		                                 GTK_STYLE_PROVIDER (provider),
+		                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		g_free (css_string);
+	}
 	
 	xpad_pad_save_info (pad);
 }
@@ -833,9 +844,24 @@ prop_notify_font (XpadPad *pad)
 	PangoFontDescription *fontdesc;
 	
 	fontdesc = font ? pango_font_description_from_string (font) : NULL;
-	gtk_widget_modify_font (pad->priv->textview, fontdesc);
+	
 	if (fontdesc)
+	{
+		gchar *css_string = g_strdup_printf (
+			"textview { font-family: %s; font-size: %dpt; }",
+			pango_font_description_get_family (fontdesc),
+			pango_font_description_get_size (fontdesc) / PANGO_SCALE
+		);
+		
+		GtkCssProvider *provider = gtk_css_provider_new ();
+		gtk_css_provider_load_from_string (provider, css_string);
+		gtk_style_context_add_provider (gtk_widget_get_style_context (pad->priv->textview),
+		                                 GTK_STYLE_PROVIDER (provider),
+		                                 GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref (provider);
+		g_free (css_string);
 		pango_font_description_free (fontdesc);
+	}
 	
 	xpad_pad_save_info (pad);
 }
@@ -843,8 +869,10 @@ prop_notify_font (XpadPad *pad)
 static void
 xpad_pad_open_properties (XpadPad *pad)
 {
-	GtkStyle *style;
-	gchar *fontname;
+	GtkStyleContext *context;
+	GdkRGBA text_color, back_color;
+	PangoFontDescription *font_desc;
+	gchar *fontname = NULL;
 	
 	if (pad->priv->properties)
 	{
@@ -860,13 +888,17 @@ xpad_pad_open_properties (XpadPad *pad)
 	g_signal_connect_swapped (pad->priv->properties, "destroy", G_CALLBACK (pad_properties_destroyed), pad);
 	g_signal_connect (pad, "notify::title", G_CALLBACK (pad_properties_sync_title), NULL);
 	
-	style = gtk_widget_get_style (pad->priv->textview);
-	fontname = style->font_desc ? pango_font_description_to_string (style->font_desc) : NULL;
+	context = gtk_widget_get_style_context (pad->priv->textview);
+	gtk_style_context_get_color (context, &text_color);
+	gtk_style_context_get (context, "background-color", &back_color, NULL);
+	font_desc = pango_context_get_font_description (gtk_widget_get_pango_context (pad->priv->textview));
+	fontname = font_desc ? pango_font_description_to_string (font_desc) : NULL;
+	
 	g_object_set (G_OBJECT (pad->priv->properties),
 		"follow-font-style", xpad_text_view_get_follow_font_style (XPAD_TEXT_VIEW (pad->priv->textview)),
 		"follow-color-style", xpad_text_view_get_follow_color_style (XPAD_TEXT_VIEW (pad->priv->textview)),
-		"back-color", &style->base[GTK_STATE_NORMAL],
-		"text-color", &style->text[GTK_STATE_NORMAL],
+		"back-color", &back_color,
+		"text-color", &text_color,
 		"fontname", fontname,
 		NULL);
 	g_free (fontname);
@@ -879,7 +911,7 @@ xpad_pad_open_properties (XpadPad *pad)
 	
 	pad_properties_sync_title (pad);
 	
-	gtk_widget_show (pad->priv->properties);
+	gtk_widget_set_visible (pad->priv->properties, TRUE);
 }
 
 static void
@@ -941,24 +973,9 @@ xpad_pad_configure_event (XpadPad *pad, GdkEventConfigure *event)
 }
 
 static gboolean
-xpad_pad_window_state_event (XpadPad *pad, GdkEventWindowState *event)
-{
-	if (event->changed_mask & GDK_WINDOW_STATE_STICKY) {
-		if (GTK_WIDGET_VISIBLE (pad))
-		{
-			pad->priv->sticky = (event->new_window_state & GDK_WINDOW_STATE_STICKY) ? TRUE : FALSE;
-			xpad_pad_save_info (pad);
-		}
-	}
-	
-	return FALSE;
-}
-
-static gboolean
-xpad_pad_delete_event (XpadPad *pad, GdkEvent *event)
+xpad_pad_close_request (GtkWindow *window, XpadPad *pad)
 {
 	xpad_pad_close (pad);
-	
 	return TRUE;
 }
 
@@ -970,76 +987,103 @@ xpad_pad_popup_menu (XpadPad *pad)
 	return TRUE;
 }
 
-static gboolean
-xpad_pad_text_view_button_press_event (GtkWidget *text_view, GdkEventButton *event, XpadPad *pad)
+static void
+xpad_pad_text_view_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadPad *pad)
 {
-	if (event->type == GDK_BUTTON_PRESS)
-	{
-		switch (event->button)
-		{
-		case 1:
-			if ((event->state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
-			{
-				gtk_window_begin_move_drag (GTK_WINDOW (pad), event->button, event->x_root, event->y_root, event->time);
-				return TRUE;
-			}
-			break;
-		
-		case 3:
-			if ((event->state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
-			{
-				GdkWindowEdge edge;
-				
-				if (gtk_widget_get_direction (GTK_WIDGET (pad)) == GTK_TEXT_DIR_LTR)
-					edge = GDK_WINDOW_EDGE_SOUTH_EAST;
-				else
-					edge = GDK_WINDOW_EDGE_SOUTH_WEST;
-				
-				gtk_window_begin_resize_drag (GTK_WINDOW (pad), edge, event->button, event->x_root, event->y_root, event->time);
-			}
-			else
-			{
-				xpad_pad_popup (pad, event);
-			}
-			return TRUE;
-		}
-	}
+	guint button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
+	GdkEvent *event = gtk_event_controller_get_current_event (GTK_EVENT_CONTROLLER (gesture));
+	GdkModifierType state = gdk_event_get_modifier_state (event);
 	
-	return FALSE;
+	switch (button)
+	{
+	case 1:
+		if ((state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
+		{
+			GtkWidget *toplevel = gtk_widget_get_root (GTK_WIDGET (pad));
+			GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (toplevel));
+			GdkDevice *device = gdk_event_get_device (event);
+			guint32 timestamp = gdk_event_get_time (event);
+			double root_x, root_y;
+			gdk_event_get_position (event, &root_x, &root_y);
+			
+			gdk_toplevel_begin_move (GDK_TOPLEVEL (surface), device, button, root_x, root_y, timestamp);
+		}
+		break;
+	
+	case 3:
+		if ((state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
+		{
+			GdkSurfaceEdge edge;
+			
+			if (gtk_widget_get_direction (GTK_WIDGET (pad)) == GTK_TEXT_DIR_LTR)
+				edge = GDK_SURFACE_EDGE_SOUTH_EAST;
+			else
+				edge = GDK_SURFACE_EDGE_SOUTH_WEST;
+			
+			GtkWidget *toplevel = gtk_widget_get_root (GTK_WIDGET (pad));
+			GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (toplevel));
+			GdkDevice *device = gdk_event_get_device (event);
+			guint32 timestamp = gdk_event_get_time (event);
+			double root_x, root_y;
+			gdk_event_get_position (event, &root_x, &root_y);
+			
+			gdk_toplevel_begin_resize (GDK_TOPLEVEL (surface), edge, device, button, root_x, root_y, timestamp);
+		}
+		else
+		{
+			xpad_pad_popup (pad, event);
+		}
+		break;
+	}
 }
 
-static gboolean
-xpad_pad_button_press_event (XpadPad *pad, GdkEventButton *event)
+static void
+xpad_pad_button_pressed (GtkGestureClick *gesture, int n_press, double x, double y, XpadPad *pad)
 {
-	if (event->type == GDK_BUTTON_PRESS)
-	{
-		switch (event->button)
-		{
-		case 1:
-			gtk_window_begin_move_drag (GTK_WINDOW (pad), event->button, event->x_root, event->y_root, event->time);
-			return TRUE;
-		
-		case 3:
-			if ((event->state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
-			{
-				GdkWindowEdge edge;
-				
-				if (gtk_widget_get_direction (GTK_WIDGET (pad)) == GTK_TEXT_DIR_LTR)
-					edge = GDK_WINDOW_EDGE_SOUTH_EAST;
-				else
-					edge = GDK_WINDOW_EDGE_SOUTH_WEST;
-				
-				gtk_window_begin_resize_drag (GTK_WINDOW (pad), edge, event->button, event->x_root, event->y_root, event->time);
-			}
-			else
-			{
-				xpad_pad_popup (pad, event);
-			}
-			return TRUE;
-		}
-	}
+	guint button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
+	GdkEvent *event = gtk_event_controller_get_current_event (GTK_EVENT_CONTROLLER (gesture));
+	GdkModifierType state = gdk_event_get_modifier_state (event);
 	
-	return FALSE;
+	switch (button)
+	{
+	case 1:
+		{
+			GtkWidget *toplevel = gtk_widget_get_root (GTK_WIDGET (pad));
+			GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (toplevel));
+			GdkDevice *device = gdk_event_get_device (event);
+			guint32 timestamp = gdk_event_get_time (event);
+			double root_x, root_y;
+			gdk_event_get_position (event, &root_x, &root_y);
+			
+			gdk_toplevel_begin_move (GDK_TOPLEVEL (surface), device, button, root_x, root_y, timestamp);
+		}
+		break;
+	
+	case 3:
+		if ((state & gtk_accelerator_get_default_mod_mask ()) == GDK_CONTROL_MASK)
+		{
+			GdkSurfaceEdge edge;
+			
+			if (gtk_widget_get_direction (GTK_WIDGET (pad)) == GTK_TEXT_DIR_LTR)
+				edge = GDK_SURFACE_EDGE_SOUTH_EAST;
+			else
+				edge = GDK_SURFACE_EDGE_SOUTH_WEST;
+			
+			GtkWidget *toplevel = gtk_widget_get_root (GTK_WIDGET (pad));
+			GdkSurface *surface = gtk_native_get_surface (GTK_NATIVE (toplevel));
+			GdkDevice *device = gdk_event_get_device (event);
+			guint32 timestamp = gdk_event_get_time (event);
+			double root_x, root_y;
+			gdk_event_get_position (event, &root_x, &root_y);
+			
+			gdk_toplevel_begin_resize (GDK_TOPLEVEL (surface), edge, device, button, root_x, root_y, timestamp);
+		}
+		else
+		{
+			xpad_pad_popup (pad, event);
+		}
+		break;
+	}
 }
 
 static void

@@ -66,25 +66,28 @@ _("Please send comments or bug reports to "
 	
 	g_free (helptextbuf);
 	
-	gtk_misc_set_padding (GTK_MISC (helptext), 12, 12);
-	gtk_misc_set_alignment (GTK_MISC (helptext), 0, 0);
-	gtk_label_set_line_wrap (GTK_LABEL (helptext), TRUE);
+	gtk_widget_set_margin_start (helptext, 12);
+	gtk_widget_set_margin_end (helptext, 12);
+	gtk_widget_set_margin_top (helptext, 12);
+	gtk_widget_set_margin_bottom (helptext, 12);
+	gtk_widget_set_halign (helptext, GTK_ALIGN_START);
+	gtk_widget_set_valign (helptext, GTK_ALIGN_START);
+	gtk_label_set_wrap (GTK_LABEL (helptext), TRUE);
 	
 	gtk_window_set_title (GTK_WINDOW (dialog), _("Help"));
 	
 	/* Add the label, and show everything we've added to the dialog. */
-	gtk_container_add (GTK_CONTAINER (GTK_DIALOG(dialog)->vbox), helptext);
-	button = gtk_dialog_add_button (GTK_DIALOG(dialog), "gtk-close", 1);
-	
-	gtk_window_set_position (GTK_WINDOW(dialog), GTK_WIN_POS_CENTER);
+	GtkWidget *content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+	gtk_box_append (GTK_BOX (content_area), helptext);
+	button = gtk_dialog_add_button (GTK_DIALOG(dialog), _("Close"), GTK_RESPONSE_CLOSE);
 	
 	g_signal_connect (GTK_OBJECT (dialog), "destroy", 
 		G_CALLBACK (help_close), NULL);
 	g_signal_connect_swapped (GTK_OBJECT (button), "clicked", 
-		G_CALLBACK (gtk_widget_destroy), dialog);
+		G_CALLBACK (gtk_window_destroy), dialog);
 	
 	gtk_window_set_resizable (GTK_WINDOW (dialog), FALSE);
-	gtk_widget_show_all (dialog);
+	gtk_widget_set_visible (dialog, TRUE);
 	
 	return dialog;
 }

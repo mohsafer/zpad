@@ -58,11 +58,11 @@ gboolean xpad_pad_properties_get_follow_font_style (XpadPadProperties *pad_prope
 void xpad_pad_properties_set_follow_color_style (XpadPadProperties *pad_properties, gboolean follow);
 gboolean xpad_pad_properties_get_follow_color_style (XpadPadProperties *pad_properties);
 
-void xpad_pad_properties_set_back_color (XpadPadProperties *pad_properties, const GdkColor *back);
-G_CONST_RETURN GdkColor *xpad_pad_properties_get_back_color (XpadPadProperties *pad_properties);
+void xpad_pad_properties_set_back_color (XpadPadProperties *pad_properties, const GdkRGBA *back);
+const GdkRGBA *xpad_pad_properties_get_back_color (XpadPadProperties *pad_properties);
 
-void xpad_pad_properties_set_text_color (XpadPadProperties *pad_properties, const GdkColor *text);
-G_CONST_RETURN GdkColor *xpad_pad_properties_get_text_color (XpadPadProperties *pad_properties);
+void xpad_pad_properties_set_text_color (XpadPadProperties *pad_properties, const GdkRGBA *text);
+const GdkRGBA *xpad_pad_properties_get_text_color (XpadPadProperties *pad_properties);
 
 void xpad_pad_properties_set_fontname (XpadPadProperties *pad_properties, const gchar *fontname);
 G_CONST_RETURN gchar *xpad_pad_properties_get_fontname (XpadPadProperties *pad_properties);
