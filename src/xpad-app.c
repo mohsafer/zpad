@@ -91,25 +91,39 @@ static gboolean  xpad_app_first_idle_check  (XpadPadGroup *group);
 static gboolean  xpad_app_pass_args         (void);
 static gboolean  xpad_app_open_proc_file    (void);
 
+typedef struct
+{
+	GMainLoop *loop;
+	gint        response;
+} XpadDialogLoop;
+
+static void     xpad_dialog_response_cb     (GtkDialog *dialog, gint response_id, gpointer user_data);
+static gboolean xpad_dialog_close_request_cb(GtkWindow *window, gpointer user_data);
+static void     xpad_dialog_emit_response   (GtkWidget *widget, gpointer user_data);
 
 static void
 xpad_app_init (int argc, char **argv)
 {
-	gboolean first_time;
-	gboolean have_gtk;
-/*	GdkVisual *visual;*/
-	
-	/* Set up i18n */
-#ifdef ENABLE_NLS
-	bindtextdomain (GETTEXT_PACKAGE, LOCALE_DIR);
-	bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
-	textdomain (GETTEXT_PACKAGE);
-#endif
-	
-	have_gtk = gtk_init_check ();
-	xpad_argc = argc;
-	xpad_argv = argv;
-	output = stdout;
+/* We do this check at the first idle rather than immediately during
+   start because we want to give the tray time to become embedded. */
+	if (!xpad_tray_is_open () &&
+	    xpad_pad_group_num_visible_pads (group) == 0)
+	{
+		if (pads_loaded_on_start > 0)
+		{
+			/* So we loaded xpad, there's no tray, and there's only hidden
+			   pads...  Probably previously had tray open but we failed
+			   this time.  Show all pads as a last resort.  This shouldn't
+			   happen in normal operation. */
+			xpad_pad_group_show_all (group);
+		}
+		else
+		{
+			exit (0);
+		}
+	}
+
+	return G_SOURCE_REMOVE;
 	
 	/* Set up config directory. */
 	first_time = !config_dir_exists ();
@@ -165,7 +179,7 @@ xpad_app_init (int argc, char **argv)
 	if (pads_loaded_on_start == 0 && !option_new) {
 		if (!option_nonew) {
 			GtkWidget *pad = xpad_pad_new (pad_group);
-			gtk_widget_show (pad);
+			gtk_widget_set_visible (pad, TRUE);
 		}
 	}
 	
@@ -202,18 +216,91 @@ void
 xpad_app_error (GtkWindow *parent, const gchar *primary, const gchar *secondary)
 {
 	GtkWidget *dialog;
-	
+	GtkWidget *button;
+	GtkWidget *content;
+	GtkWidget *actions;
+
 	if (!xpad_session_manager_start_interact (TRUE))
 		return;
-	
+
 	g_printerr ("%s\n", primary);
-	
+
 	dialog = xpad_app_alert_new (parent, "dialog-error", primary, secondary);
-	gtk_dialog_add_buttons (GTK_DIALOG (dialog), "OK", 1, NULL);
-	gtk_dialog_run (GTK_DIALOG (dialog));
-	gtk_window_destroy (GTK_WINDOW (dialog));
-	
+	if (!dialog)
+	{
+		xpad_session_manager_stop_interact (FALSE);
+		return;
+	}
+
+	content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+	actions = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+	gtk_widget_set_halign (actions, GTK_ALIGN_END);
+	gtk_widget_set_margin_start (actions, 12);
+	gtk_widget_set_margin_end (actions, 12);
+	gtk_widget_set_margin_bottom (actions, 12);
+	gtk_box_append (GTK_BOX (content), actions);
+
+	button = gtk_button_new_with_label (_("OK"));
+	gtk_widget_add_css_class (button, "suggested-action");
+	gtk_box_append (GTK_BOX (actions), button);
+	gtk_widget_set_visible (button, TRUE);
+	gtk_widget_set_visible (actions, TRUE);
+	gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
+	g_object_set_data (G_OBJECT (button), "xpad-response-id", GINT_TO_POINTER (GTK_RESPONSE_OK));
+	g_signal_connect (button, "clicked", G_CALLBACK (xpad_dialog_emit_response), dialog);
+
+	(void) xpad_dialog_run (GTK_DIALOG (dialog));
+
 	xpad_session_manager_stop_interact (FALSE);
+}
+
+
+static void
+xpad_dialog_response_cb (GtkDialog *dialog, gint response_id, gpointer user_data)
+{
+	XpadDialogLoop *loop = user_data;
+	loop->response = response_id;
+	if (loop->loop && g_main_loop_is_running (loop->loop))
+		g_main_loop_quit (loop->loop);
+	gtk_window_destroy (GTK_WINDOW (dialog));
+}
+
+static gboolean
+xpad_dialog_close_request_cb (GtkWindow *window, gpointer user_data)
+{
+	XpadDialogLoop *loop = user_data;
+	loop->response = GTK_RESPONSE_DELETE_EVENT;
+	if (loop->loop && g_main_loop_is_running (loop->loop))
+		g_main_loop_quit (loop->loop);
+	gtk_window_destroy (window);
+	return TRUE;
+}
+
+static void
+xpad_dialog_emit_response (GtkWidget *widget, gpointer user_data)
+{
+	GtkDialog *dialog = GTK_DIALOG (user_data);
+	gint response_id = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (widget), "xpad-response-id"));
+	gtk_dialog_response (dialog, response_id);
+}
+
+gint
+xpad_dialog_run (GtkDialog *dialog)
+{
+	XpadDialogLoop loop = { g_main_loop_new (NULL, FALSE), GTK_RESPONSE_NONE };
+
+	g_signal_connect (dialog, "response", G_CALLBACK (xpad_dialog_response_cb), &loop);
+	g_signal_connect (dialog, "close-request", G_CALLBACK (xpad_dialog_close_request_cb), &loop);
+
+	gtk_window_present (GTK_WINDOW (dialog));
+
+	if (loop.loop)
+		g_main_loop_run (loop.loop);
+
+	if (loop.loop)
+		g_main_loop_unref (loop.loop);
+
+	return loop.response;
 }
 
 
@@ -330,41 +417,64 @@ GtkWidget *
 xpad_app_alert_new (GtkWindow *parent, const gchar *stock,
                     const gchar *primary, const gchar *secondary)
 {
-	GtkWidget *dialog, *hbox, *image, *label;
-	gchar *buf;
-	
-	dialog = gtk_dialog_new_with_buttons (
-		"",
-		parent,
-		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
-		NULL);
-	
-	hbox = gtk_hbox_new (FALSE, 12);
-	image = gtk_image_new_from_stock (stock, GTK_ICON_SIZE_DIALOG);
-	label = gtk_label_new (NULL);
-	
-	if (secondary)
-		buf = g_strdup_printf ("<span weight=\"bold\" size=\"larger\">%s\n</span>\n%s", primary, secondary);
-	else
-		buf = g_strdup_printf ("<span weight=\"bold\" size=\"larger\">%s</span>", primary);
-	
-	gtk_label_set_markup (GTK_LABEL (label), buf);
-	g_free (buf);
-	
-	gtk_container_add (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), hbox);
-	gtk_container_add (GTK_CONTAINER (hbox), image);
-	gtk_container_add (GTK_CONTAINER (hbox), label);
-	
-	gtk_misc_set_alignment (GTK_MISC (image), 0.5, 0);
-	gtk_misc_set_alignment (GTK_MISC (label), 0.5, 0);
-	gtk_label_set_line_wrap (GTK_LABEL (label), TRUE);
-	gtk_box_set_spacing (GTK_BOX (GTK_DIALOG (dialog)->vbox), 12);
-	gtk_container_set_border_width (GTK_CONTAINER (hbox), 6);
-	gtk_container_set_border_width (GTK_CONTAINER (dialog), 6);
+	GtkWidget *dialog;
+	GtkWidget *content;
+	GtkWidget *box;
+	GtkWidget *image = NULL;
+	GtkWidget *label;
+	gchar *markup;
+
+	dialog = gtk_dialog_new ();
+
+	if (parent)
+	{
+		gtk_window_set_transient_for (GTK_WINDOW (dialog), parent);
+		gtk_window_set_destroy_with_parent (GTK_WINDOW (dialog), TRUE);
+	}
+
+	gtk_window_set_modal (GTK_WINDOW (dialog), TRUE);
+	gtk_window_set_title (GTK_WINDOW (dialog), "");
 	gtk_window_set_resizable (GTK_WINDOW (dialog), FALSE);
-	
-	gtk_widget_show_all (hbox);
-	
+
+	content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+	gtk_box_set_spacing (GTK_BOX (content), 12);
+
+	box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+	gtk_widget_set_margin_start (box, 12);
+	gtk_widget_set_margin_end (box, 12);
+	gtk_widget_set_margin_top (box, 12);
+	gtk_widget_set_margin_bottom (box, 12);
+	gtk_box_append (GTK_BOX (content), box);
+
+	if (stock && *stock)
+	{
+		image = gtk_image_new_from_icon_name (stock);
+		if (image)
+		{
+			gtk_image_set_pixel_size (GTK_IMAGE (image), 48);
+			gtk_widget_set_valign (image, GTK_ALIGN_START);
+			gtk_box_append (GTK_BOX (box), image);
+		}
+	}
+
+	label = gtk_label_new (NULL);
+	gtk_widget_set_halign (label, GTK_ALIGN_START);
+	gtk_widget_set_valign (label, GTK_ALIGN_CENTER);
+	gtk_widget_set_hexpand (label, TRUE);
+	gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
+	gtk_label_set_wrap (GTK_LABEL (label), TRUE);
+	gtk_label_set_wrap_mode (GTK_LABEL (label), PANGO_WRAP_WORD_CHAR);
+
+	if (secondary)
+		markup = g_strdup_printf ("<span weight=\"bold\" size=\"larger\">%s</span>\n%s", primary, secondary);
+	else
+		markup = g_strdup_printf ("<span weight=\"bold\" size=\"larger\">%s</span>", primary);
+
+	gtk_label_set_markup (GTK_LABEL (label), markup);
+	g_free (markup);
+
+	gtk_box_append (GTK_BOX (box), label);
+
 	return dialog;
 }
 
@@ -372,10 +482,15 @@ xpad_app_alert_new (GtkWindow *parent, const gchar *stock,
 static void
 register_stock_icons (void)
 {
-	GtkIconTheme *theme;
-	
-	theme = gtk_icon_theme_get_default ();
-	gtk_icon_theme_prepend_search_path (theme, THEME_DIR);
+	GdkDisplay *display = gdk_display_get_default ();
+	if (!display)
+		return;
+
+	GtkIconTheme *theme = gtk_icon_theme_get_for_display (display);
+	if (!theme)
+		return;
+
+	gtk_icon_theme_add_search_path (theme, THEME_DIR);
 }
 
 
@@ -457,7 +572,7 @@ xpad_app_load_pads (void)
 			gboolean show = TRUE;
 			GtkWidget *pad = xpad_pad_new_with_info (pad_group, name, &show);
 			if ((show || option_show) && !option_hide)
-				gtk_widget_show (pad);
+				gtk_widget_set_visible (pad, TRUE);
 		  else if (show) /* pad thought it would show, we should save that it didn't */
 		    xpad_pad_save_info (XPAD_PAD (pad));
 			
@@ -835,7 +950,7 @@ process_remote_args (gint *argc, gchar **argv[], gboolean have_gtk)
 		if (have_gtk && option_new)
 		{
 			GtkWidget *pad = xpad_pad_new (pad_group);
-			gtk_widget_show (pad);
+			gtk_widget_set_visible (pad, TRUE);
 		}
 
 		if (have_gtk && option_show)
@@ -854,7 +969,7 @@ process_remote_args (gint *argc, gchar **argv[], gboolean have_gtk)
 			{
 				GtkWidget *pad = xpad_pad_new_from_file (pad_group, option_files[i]);
 				if (pad)
-					gtk_widget_show (pad);
+					gtk_widget_set_visible (pad, TRUE);
 			}
 		}
 		

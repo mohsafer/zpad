@@ -116,6 +116,7 @@ static void xpad_pad_cut (XpadPad *pad);
 static void xpad_pad_copy (XpadPad *pad);
 static void xpad_pad_paste (XpadPad *pad);
 static void xpad_pad_delete (XpadPad *pad);
+static void xpad_pad_dialog_emit_response (GtkWidget *widget, gpointer user_data);
 static void xpad_pad_open_properties (XpadPad *pad);
 static void xpad_pad_open_preferences (XpadPad *pad);
 static void xpad_pad_quit (XpadPad *pad);
@@ -691,6 +692,15 @@ should_confirm_delete (XpadPad *pad)
 }
 
 static void
+xpad_pad_dialog_emit_response (GtkWidget *widget, gpointer user_data)
+{
+	GtkDialog *dialog = GTK_DIALOG (user_data);
+	gint response_id = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (widget), "xpad-response-id"));
+
+	gtk_dialog_response (dialog, response_id);
+}
+
+static void
 xpad_pad_delete (XpadPad *pad)
 {
 	if (should_confirm_delete (pad))
@@ -698,20 +708,36 @@ xpad_pad_delete (XpadPad *pad)
 		GtkWidget *dialog;
 		gint response;
 		
-		dialog = xpad_app_alert_new (GTK_WINDOW (pad), GTK_STOCK_DIALOG_WARNING,
+		dialog = xpad_app_alert_new (GTK_WINDOW (pad), "dialog-warning",
 			_("Delete this pad?"),
 			_("All text of this pad will be irrevocably lost."));
 		
 		if (!dialog)
 			return;
+		GtkWidget *content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+		GtkWidget *actions = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+		GtkWidget *cancel_button = gtk_button_new_with_mnemonic (_("_Cancel"));
+		GtkWidget *delete_button = gtk_button_new_with_mnemonic (_("_Delete"));
+		gtk_widget_add_css_class (delete_button, "destructive-action");
+		gtk_widget_set_halign (actions, GTK_ALIGN_END);
+		gtk_widget_set_margin_start (actions, 12);
+		gtk_widget_set_margin_end (actions, 12);
+		gtk_widget_set_margin_bottom (actions, 12);
+		gtk_box_append (GTK_BOX (content), actions);
+		gtk_box_append (GTK_BOX (actions), cancel_button);
+		gtk_box_append (GTK_BOX (actions), delete_button);
+		gtk_widget_set_visible (cancel_button, TRUE);
+		gtk_widget_set_visible (delete_button, TRUE);
+		gtk_widget_set_visible (actions, TRUE);
+		gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_CANCEL);
+		g_object_set_data (G_OBJECT (cancel_button), "xpad-response-id", GINT_TO_POINTER (GTK_RESPONSE_CANCEL));
+		g_object_set_data (G_OBJECT (delete_button), "xpad-response-id", GINT_TO_POINTER (GTK_RESPONSE_ACCEPT));
+		g_signal_connect (cancel_button, "clicked", G_CALLBACK (xpad_pad_dialog_emit_response), dialog);
+		g_signal_connect (delete_button, "clicked", G_CALLBACK (xpad_pad_dialog_emit_response), dialog);
 		
-		gtk_dialog_add_buttons (GTK_DIALOG (dialog), GTK_STOCK_CANCEL, 1, GTK_STOCK_DELETE, 2, NULL);
+		response = xpad_dialog_run (GTK_DIALOG (dialog));
 		
-		response = gtk_dialog_run (GTK_DIALOG (dialog));
-		
-		gtk_widget_destroy (dialog);
-		
-		if (response != 2)
+		if (response != GTK_RESPONSE_ACCEPT)
 			return;
 	}
 	
