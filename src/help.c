@@ -36,12 +36,12 @@ static void show_help_at_page (gint page);
 
 static GtkWidget *create_help (gint page)
 {
-	GtkWidget *dialog, *helptext, *button;
+	GtkWidget *dialog, *helptext, *button, *content, *actions;
 	gchar *helptextbuf;
 	
-	/* Create the widgets */
+	/* Create the widgets using GtkWindow instead of deprecated GtkDialog */
 	
-	dialog = gtk_dialog_new ();
+	dialog = gtk_window_new ();
 	helptext = gtk_label_new ("");
 	
 	/* we use g_strdup_printf because C89 has size limits on static strings */
@@ -76,10 +76,21 @@ _("Please send comments or bug reports to "
 	
 	gtk_window_set_title (GTK_WINDOW (dialog), _("Help"));
 	
-	/* Add the label, and show everything we've added to the dialog. */
-	GtkWidget *content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
-	gtk_box_append (GTK_BOX (content_area), helptext);
-	button = gtk_dialog_add_button (GTK_DIALOG(dialog), _("Close"), GTK_RESPONSE_CLOSE);
+	/* Build content box with help text and close button */
+	content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 6);
+	gtk_box_append (GTK_BOX (content), helptext);
+	
+	actions = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+	gtk_widget_set_halign (actions, GTK_ALIGN_END);
+	gtk_widget_set_margin_start (actions, 12);
+	gtk_widget_set_margin_end (actions, 12);
+	gtk_widget_set_margin_bottom (actions, 12);
+	
+	button = gtk_button_new_with_label (_("Close"));
+	gtk_box_append (GTK_BOX (actions), button);
+	gtk_box_append (GTK_BOX (content), actions);
+	
+	gtk_window_set_child (GTK_WINDOW (dialog), content);
 	
 	g_signal_connect (dialog, "destroy", 
 		G_CALLBACK (help_close), NULL);

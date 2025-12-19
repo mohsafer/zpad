@@ -105,9 +105,13 @@ static void
 xpad_app_init (int argc, char **argv)
 {
 	gboolean first_time;
-	gboolean have_gtk;
 
-	have_gtk = gtk_init_check (&argc, &argv);
+	/* GTK4: gtk_init_check takes no arguments; returns FALSE if init fails */
+	if (!gtk_init_check ())
+	{
+		fprintf (stderr, "%s\n", "Xpad is a graphical program.  Please run it from your desktop.");
+		exit (1);
+	}
 	xpad_argc = argc;
 	xpad_argv = argv;
 	output = stdout;
@@ -116,17 +120,6 @@ xpad_app_init (int argc, char **argv)
 	config_dir = make_config_dir ();
 
 	server_filename = g_build_filename (xpad_app_get_config_dir (), "server", NULL);
-
-	if (!have_gtk)
-	{
-		process_local_args (&xpad_argc, &xpad_argv);
-		if (!xpad_app_pass_args ())
-		{
-			process_remote_args (&xpad_argc, &xpad_argv, FALSE);
-			fprintf (output, "%s\n", _("Xpad is a graphical program.  Please run it from your desktop."));
-		}
-		exit (0);
-	}
 
 	g_set_application_name (_("Xpad"));
 
