@@ -1,0 +1,18 @@
+[package]
+name = "zpad"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal sticky notes for Linux — plain text, saved on the air"
+license = "MIT"
+
+[dependencies]
+gtk4 = { version = "0.10", features = ["v4_12"] }
+ksni = { version = "0.3", features = ["blocking"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"

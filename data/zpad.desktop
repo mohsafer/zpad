@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=zPad
+GenericName=Sticky Notes
+Comment=Quick plain-text sticky notes that save themselves
+Exec=zpad
+Icon=zpad
+Terminal=false
+Categories=Utility;NoteTaking;
+Keywords=note;sticky;memo;quick;scratch;
+StartupNotify=true
+StartupWMClass=io.github.zpad.Zpad
