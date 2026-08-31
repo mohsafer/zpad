@@ -32,10 +32,7 @@ pub struct Config {
     // startup
     pub autostart: bool,
     pub wait_systray: bool,
-    pub open_new_pad_on_start: bool,
     pub startup_delay_secs: u32,
-    /// "restore" (default) or "new" (start with a single empty note).
-    pub display_pads: String,
 
     // tray
     pub tray_enabled: bool,
@@ -81,7 +78,6 @@ impl Config {
             new_pad_height: 220,
             autostart: false,
             wait_systray: true,
-            display_pads: "restore".into(),
             tray_enabled: true,
             tray_click: "toggle".into(),
             confirm_delete: true,
@@ -96,7 +92,9 @@ impl Config {
         }
         let raw = toml::to_string(self)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        std::fs::write(path, raw)
+        // Atomic like the notes themselves: a power cut mid-write must not
+        // leave a truncated config behind.
+        crate::storage::atomic_write(&path, raw.as_bytes())
     }
 }
 

@@ -126,6 +126,10 @@ fn wire_check(
 }
 
 fn combo(options: &[&str], active: usize) -> gtk::ComboBoxText {
+    assert!(
+        !options.is_empty(),
+        "combo() called with no options — caller bug"
+    );
     let combo = gtk::ComboBoxText::new();
     for option in options {
         combo.append_text(option);
@@ -364,10 +368,16 @@ fn startup_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
 
     let autostart = check("Start zPad automatically after login", cfg.autostart);
     let wait_systray = check("Wait for systray (if possible)", cfg.wait_systray);
-    let open_new = check("Open a new empty pad on start", cfg.open_new_pad_on_start);
     box_.append(&autostart);
     box_.append(&wait_systray);
-    box_.append(&open_new);
+    box_.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let note = gtk::Label::builder()
+        .label("zPad always starts with one empty note. Your saved notes stay\non disk — reach them any time from the tray menu (newest first).")
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    note.add_css_class("dim-label");
+    box_.append(&note);
 
     let delay_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -386,14 +396,10 @@ fn startup_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
     let display_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
+        .visible(false)
         .build();
-    display_row.append(&gtk::Label::new(Some("Display pads")));
-    let display = combo(
-        &["Restore to previous state", "Start with a new empty note"],
-        if cfg.display_pads == "new" { 1 } else { 0 },
-    );
-    display_row.append(&display);
-    box_.append(&display_row);
+    let _ = &display_row;
+    // (Display-pads preference removed: startup is always one empty note.)
 
     wait_systray.set_sensitive(cfg.autostart);
     delay.set_sensitive(cfg.autostart);
@@ -414,18 +420,11 @@ fn startup_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
         });
     }
     wire_check(state, &wait_systray, |config, v| config.wait_systray = v);
-    wire_check(state, &open_new, |config, v| config.open_new_pad_on_start = v);
     wire_combo(
         state,
         &delay,
         &["0", "1", "2", "3", "5", "10", "30"],
         |config, v| config.startup_delay_secs = v.parse().unwrap_or(0),
-    );
-    wire_combo(
-        state,
-        &display,
-        &["restore", "new"],
-        |config, v| config.display_pads = v.to_string(),
     );
 
     box_.upcast()

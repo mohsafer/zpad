@@ -80,9 +80,9 @@ impl Store {
         self.notes_dir().join(format!("{id}.txt"))
     }
 
-    /// All notes on disk, ordered by id. Unreadable or non-note files are
-    /// skipped rather than failing the whole session; a missing directory is
-    /// simply "no notes" (fresh install).
+    /// All notes on disk, ordered by id. A note that cannot be read (or a
+    /// bad directory entry) is skipped rather than aborting the whole
+    /// session; a missing directory is simply "no notes" (fresh install).
     pub fn load_notes(&self) -> io::Result<Vec<NoteFile>> {
         let mut notes = Vec::new();
         let dir = self.notes_dir();
@@ -92,7 +92,9 @@ impl Store {
             Err(err) => return Err(err),
         };
         for entry in entries {
-            let entry = entry?;
+            let Ok(entry) = entry else {
+                continue;
+            };
             let path = entry.path();
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
@@ -119,12 +121,82 @@ impl Store {
         Ok(notes)
     }
 
-    /// Highest existing id + 1, so ids never collide even after manual
-    /// tampering with the notes directory.
+    /// One note file, if it exists. `Ok(None)` means "not on disk" — not
+    /// an error.
+    pub fn load_one_note(&self, id: u64) -> io::Result<Option<String>> {
+        match fs::read(self.note_path(id)) {
+            Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Highest existing id + 1. Never returns an id that already exists on
+    /// disk, and never fails: a scan error yields `1`, which `new_note`'s
+    /// collision guard (see `app.rs`) then corrects before first write.
     pub fn next_id(&self) -> u64 {
         self.load_notes()
             .map(|notes| notes.iter().map(|n| n.id).max().unwrap_or(0) + 1)
             .unwrap_or(1)
+    }
+
+    /// Whether a note file with this id exists right now.
+    pub fn note_exists(&self, id: u64) -> bool {
+        self.note_path(id).exists()
+    }
+
+    /// Modification time of a note file, for newest-first ordering; 0 when
+    /// unavailable.
+    pub fn note_mtime(&self, id: u64) -> u64 {
+        fs::metadata(self.note_path(id))
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    /// Lightweight index of every note on disk: id, modification time, and
+    /// the first non-empty line (the title). Powers the tray list, which
+    /// must include notes that are saved but not currently open.
+    pub fn list_note_index(&self) -> Vec<(u64, u64, String)> {
+        let mut index = Vec::new();
+        let dir = self.notes_dir();
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return index;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let Ok(id) = stem.parse::<u64>() else {
+                continue;
+            };
+            let mtime = fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let title = fs::read_to_string(&path)
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("Empty note")
+                        .chars()
+                        .take(40)
+                        .collect::<String>()
+                })
+                .unwrap_or_else(|_| "(unreadable)".into());
+            index.push((id, mtime, title));
+        }
+        index.sort_by_key(|&(_, mtime, _)| std::cmp::Reverse(mtime));
+        index
     }
 
     pub fn save_note(&self, id: u64, text: &str) -> io::Result<()> {
@@ -175,7 +247,10 @@ impl Store {
 
 /// Write to a sibling temp file, fsync it, rename over the target, then fsync
 /// the directory so the rename itself survives a power loss.
-fn atomic_write(path: &std::path::Path, data: &[u8]) -> io::Result<()> {
+///
+/// Public because other modules have small files of their own to write
+/// atomically (the user config, notably).
+pub fn atomic_write(path: &std::path::Path, data: &[u8]) -> io::Result<()> {
     let dir = path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
     })?;

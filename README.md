@@ -5,25 +5,41 @@ Minimal sticky notes for Linux, in the spirit of
 text only, that saves itself while you type. No formatting, no projects, no
 accounts — just scratch space that is always one keystroke away.
 
+**Source:** <https://github.com/mohsafer/zPad>
+
 Written in Rust on GTK4, `#![forbid(unsafe_code)]`.
 
 ## What it does
 
 - **Just a box for text.** Every note is a small yellow window with KDE's
-  own native title bar — the first line of your text becomes the title. A
-  slim bar at the bottom holds `+` (new note) and the trash (delete, with a
-  confirmation — it removes the file).
+  own native title bar — the first line of your text becomes the title.
+  Hovering a note reveals a slim tool bar: new note, cut, copy, paste,
+  undo, redo, find, and the trash (delete, with a confirmation — it removes
+  the file).
 - **Saved on the air.** Notes autosave one second after your last keystroke,
   plus on focus loss, on close, and on quit. Writes are atomic
   (temp file + fsync + rename), so a crash or power loss cannot corrupt an
   existing note; the worst case loses under a second of typing.
 - **Lives in the tray.** Closing a note hides it; zPad keeps running in the
-  system tray. Clicking the tray icon opens a menu listing every note by
-  title (● open, ○ hidden) — pick one to surface just that note. The menu
-  also has *Show all notes*, *New note*, and *Quit*.
+  system tray. Clicking the tray icon shows or hides all notes (behavior
+  configurable); right-click opens a menu listing every note by title
+  (● open, ○ hidden) — pick one to surface just that note. The menu also
+  has *Show all*, *Close all*, *Help*, and *Preferences*.
 - **Quick capture.** Running `zpad` again while it is open instantly creates
   a new empty note.
-- **Keyboard:** `Ctrl+N` new note, `Ctrl+W` close the focused note.
+- **Keyboard:** `Ctrl+N` new note, `Ctrl+W` close the focused note,
+  `Ctrl+F` find, `Ctrl+J` read-only, `Ctrl+,` preferences.
+
+## Preferences
+
+Everything in the tray menu's *Preferences* dialog applies instantly and is
+saved to `~/.config/zpad/config.toml`: toolbar, scrollbar, and title-bar
+visibility; font and note colors (or follow the system theme); default size
+of new notes; start-after-login with an optional delay; whether startup
+restores the previous session or opens a fresh note; tray icon and its
+left-click behavior; read-only mode; delete confirmation. Window-management
+switches that Wayland reserves for the compositor are shown but disabled,
+with a tooltip pointing at KWin window rules.
 
 ## Install (Fedora KDE, user-local, no root)
 
@@ -89,10 +105,6 @@ stripped symbols.
 - **No rich text, ever** — formatting would force a file format richer than
   `.txt`, breaking the "readable forever" guarantee. That would be a
   different app.
-- **No color picker** — notes are the classic light yellow. A per-note picker
-  is a small, deliberate future change if wanted.
-- **No settings UI** — there is nothing to configure; if that ever changes,
-  it becomes a `config.toml`, not a dialog.
 - **No built-in sync/encryption** — delegate (see above).
 
 ## License

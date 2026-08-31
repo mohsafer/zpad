@@ -76,6 +76,8 @@ pub struct ZpadState {
     windows: RefCell<HashMap<u64, Rc<NoteWindow>>>,
     sizes: RefCell<HashMap<u64, (i32, i32)>>,
     tray: RefCell<Option<ksni::blocking::Handle<ZpadTray>>>,
+    /// Wake-up channel for the tray writer thread (see `set_tray`).
+    tray_tx: RefCell<Option<std::sync::mpsc::Sender<()>>>,
     tray_menu: SharedNotes,
     about_window: RefCell<glib::WeakRef<gtk::AboutDialog>>,
     prefs_slot: crate::prefs::Slot,
@@ -104,12 +106,19 @@ impl ZpadState {
         }
         let sizes = store.load_sizes();
         let next_id = store.next_id();
+        // Drop geometry for notes that no longer exist on disk (deleted
+        // externally, e.g. by a sync tool), so state.toml cannot grow stale.
+        let sizes: HashMap<u64, (i32, i32)> = sizes
+            .into_iter()
+            .filter(|(id, _)| store.note_exists(*id))
+            .collect();
         Rc::new(Self {
             app,
             store,
             windows: RefCell::new(HashMap::new()),
             sizes: RefCell::new(sizes),
             tray: RefCell::new(None),
+            tray_tx: RefCell::new(None),
             tray_menu: crate::tray::shared_notes(),
             about_window: RefCell::new(glib::WeakRef::new()),
             prefs_slot: crate::prefs::Slot::new(),
@@ -132,7 +141,29 @@ impl ZpadState {
 
     pub fn set_tray(&self, handle: ksni::blocking::Handle<ZpadTray>) {
         self.has_tray.set(true);
+        // ksni's blocking Handle::update waits on a D-Bus roundtrip, so the
+        // UI thread must never call it directly. This writer thread drains
+        // wake-ups and pushes one update per burst; it always reads the
+        // already-current shared snapshot, so coalescing is lossless. The
+        // thread exits when the sender is dropped (quit).
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let writer = handle.clone();
+        let spawn_result = std::thread::Builder::new()
+            .name("zpad-tray-push".into())
+            .spawn(move || {
+                while matches!(rx.recv(), Ok(())) {
+                    while rx.try_recv().is_ok() {}
+                    writer.update(|_| {});
+                }
+                // Channel closed: drop our handle clone last so the tray
+                // service can shut down.
+                drop(writer);
+            });
+        if let Err(err) = spawn_result {
+            eprintln!("zpad: tray writer thread unavailable: {err}");
+        }
         *self.tray.borrow_mut() = Some(handle);
+        *self.tray_tx.borrow_mut() = Some(tx);
     }
 
     /// A handle to the shared tray-menu snapshot, handed to the ksni thread
@@ -143,66 +174,58 @@ impl ZpadState {
 
     /// Refresh the tray menu's snapshot of the note list. The ksni thread
     /// reads this when the user opens the menu, so it is always current.
+    /// Rebuild the tray menu snapshot: every note on disk (newest first,
+    /// the tray sorts again after merge) with live windows overriding the
+    /// disk entries, since open buffers may hold unsaved edits or titles.
     pub fn sync_tray_menu(&self) {
         let mut snapshot = match self.tray_menu.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
         snapshot.clear();
+        for (id, mtime, title) in self.store.list_note_index() {
+            snapshot.push(TrayNote { id, title, visible: false, mtime });
+        }
         for window in self.windows.borrow().values() {
             let (id, title, visible) = window.tray_entry();
-            snapshot.push(TrayNote { id, title, visible });
+            let mtime = self.store.note_mtime(id);
+            if let Some(note) = snapshot.iter_mut().find(|note| note.id == id) {
+                note.title = title;
+                note.visible = visible;
+                note.mtime = mtime;
+            } else {
+                snapshot.push(TrayNote { id, title, visible, mtime });
+            }
         }
     }
 
     /// Like `sync_tray_menu`, plus a tray update so shells with a cached
-    /// menu see the change immediately. Used on discrete events (new,
-    /// delete, show, hide); typing only refreshes the snapshot.
+    /// menu see the change immediately. The snapshot is updated synchronously;
+    /// the D-Bus push is delegated to the writer thread (see `set_tray`),
+    /// which coalesces bursts into a single roundtrip. UI thread never blocks.
     pub fn sync_tray_menu_now(&self) {
         self.sync_tray_menu();
-        if let Some(handle) = self.tray.borrow().as_ref() {
-            handle.update(|_| {});
+        if let Some(tx) = self.tray_tx.borrow().as_ref() {
+            let _ = tx.send(());
         }
     }
 
-    /// First activation honors the Startup preferences: restore every saved
-    /// note, or start fresh with a single empty one — plus an optional
-    /// additional blank note. Every later activation is quick capture.
+    /// First activation always opens exactly one empty note: notes stay on
+    /// disk until the user asks for them (tray menu, newest first). Every
+    /// later activation — running `zpad` again — is the same quick capture.
     pub fn on_activated(self: &Rc<Self>) {
-        if !self.started.replace(true) {
-            let config = self.config();
-            match config.display_pads.as_str() {
-                "new" => {
-                    self.new_note();
-                }
-                _ => match self.store.load_notes() {
-                    Ok(notes) if !notes.is_empty() => {
-                        let sizes = self.sizes.borrow().clone();
-                        for note in notes {
-                            let (width, height) =
-                                sizes.get(&note.id).copied().unwrap_or(DEFAULT_SIZE);
-                            self.open_note(note.id, note.text, width, height);
-                        }
-                    }
-                    Ok(_) => {
-                        self.new_note();
-                    }
-                    Err(err) => {
-                        eprintln!("zpad: cannot read notes: {err}");
-                        self.new_note();
-                    }
-                },
-            }
-            if config.open_new_pad_on_start {
-                self.new_note();
-            }
-        } else {
-            self.new_note();
-        }
+        self.started.set(true);
+        self.new_note();
     }
 
     pub fn new_note(self: &Rc<Self>) -> Rc<NoteWindow> {
-        let id = self.next_id.get();
+        // Pick an id no open window holds and no file on disk uses — files
+        // can appear between launches (sync, manual edits), and reusing one
+        // would make the first autosave silently overwrite that note.
+        let mut id = self.next_id.get().max(self.store.next_id());
+        while self.windows.borrow().contains_key(&id) || self.store.note_exists(id) {
+            id += 1;
+        }
         self.next_id.set(id + 1);
         let config = self.config();
         let (width, height) = (config.new_pad_width, config.new_pad_height);
@@ -223,10 +246,31 @@ impl ZpadState {
         self.sync_tray_menu_now();
     }
 
-    /// Surface exactly one note, chosen from the tray menu.
-    pub fn show_note(&self, id: u64) {
-        if let Some(window) = self.windows.borrow().get(&id) {
-            window.present();
+    /// Surface a note from the tray list. Most are already open-but-hidden
+    /// windows; notes that were never opened this session (or were fully
+    /// dropped) are loaded from disk on demand.
+    pub fn show_note(self: &Rc<Self>, id: u64) {
+        let existing = self.windows.borrow().get(&id).cloned();
+        match existing {
+            Some(window) => window.present(),
+            None => match self.store.load_one_note(id) {
+                Ok(Some(text)) => {
+                    let (width, height) = self
+                        .sizes
+                        .borrow()
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(DEFAULT_SIZE);
+                    self.open_note(id, text, width, height);
+                    return; // open_note already synced the tray
+                }
+                Ok(None) => {
+                    eprintln!("zpad: tray asked for missing note {id}");
+                }
+                Err(err) => {
+                    eprintln!("zpad: cannot open note {id}: {err}");
+                }
+            },
         }
         self.sync_tray_menu_now();
     }
@@ -245,7 +289,8 @@ impl ZpadState {
     }
 
     /// Small About window: what zPad is, who made it, when.
-    pub fn show_about(&self) {        let slot = self.about_window.borrow_mut();
+    pub fn show_about(&self) {
+        let slot = self.about_window.borrow_mut();
         let dialog = match slot.upgrade() {
             Some(dialog) => dialog,
             None => {
@@ -257,6 +302,8 @@ impl ZpadState {
                 ));
                 dialog.set_copyright(Some("© 2026 mosafer"));
                 dialog.set_authors(&["mosafer"]);
+                dialog.set_website(Some("https://github.com/mohsafer/zPad"));
+                dialog.set_website_label("github.com/mohsafer/zPad");
                 dialog.set_license_type(gtk::License::MitX11);
                 dialog.set_logo_icon_name(Some("zpad"));
                 dialog.set_modal(false);
@@ -357,24 +404,10 @@ impl ZpadState {
         }
     }
 
-    /// Tray left-click: "toggle" hides everything if a note is visible and
-    /// surfaces all notes otherwise; "show-all" always surfaces.
+    /// Tray left-click: quick capture — one new empty note, like running
+    /// `zpad` again. Saved notes are never dumped onto the desktop.
     pub fn tray_activate(self: &Rc<Self>) {
-        match self.config().tray_click.as_str() {
-            "show-all" => self.show_all_notes(),
-            _ => {
-                let any_visible = self
-                    .windows
-                    .borrow()
-                    .values()
-                    .any(|window| window.is_visible());
-                if any_visible {
-                    self.hide_all_notes();
-                } else {
-                    self.show_all_notes();
-                }
-            }
-        }
+        self.new_note();
     }
 
     /// Ctrl+J: flip read-only mode for every note.
@@ -438,9 +471,11 @@ impl ZpadState {
             self.flush_window(window);
         }
         self.persist_sizes();
-        if let Some(handle) = self.tray.borrow_mut().take() {
-            handle.shutdown().wait();
-        }
+        // Close the writer channel first, then drop the handle: the tray
+        // service winds down without the UI thread blocking on D-Bus. The
+        // process exits right after `app.quit()` anyway.
+        self.tray_tx.borrow_mut().take();
+        self.tray.borrow_mut().take();
         self.app.quit();
     }
 
@@ -452,8 +487,17 @@ impl ZpadState {
         window
     }
 
+    /// Persisted sizes actually reference open windows; a hidden-then-reused
+    /// id keeps its entry. External deletions were pruned at startup.
     fn persist_sizes(&self) {
-        if let Err(err) = self.store.save_sizes(&self.sizes.borrow()) {
+        let sizes: HashMap<u64, (i32, i32)> = self
+            .sizes
+            .borrow()
+            .iter()
+            .filter(|(id, _)| self.windows.borrow().contains_key(id))
+            .map(|(&id, &size)| (id, size))
+            .collect();
+        if let Err(err) = self.store.save_sizes(&sizes) {
             eprintln!("zpad: saving window sizes: {err}");
         }
     }

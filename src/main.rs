@@ -43,7 +43,6 @@ pub(crate) const STATIC_STYLE: &str = "
 .zpad-note .note-bar button.danger {
     color: #d13b3b;
 }
-/* Anchored pin: a latched look behind the anchor glyph, not a recolor. */
 .zpad-note .note-bar separator.tool-sep {
     min-width: 1px;
     margin-top: 4px;

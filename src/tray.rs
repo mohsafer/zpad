@@ -21,6 +21,8 @@ pub struct TrayNote {
     pub id: u64,
     pub title: String,
     pub visible: bool,
+    /// File modification time, used to sort newest-first in the menu.
+    pub mtime: u64,
 }
 
 /// Shared between the GTK main thread (writer) and the ksni thread (reader
@@ -104,7 +106,7 @@ impl ksni::Tray for ZpadTray {
     }
 
     fn menu(&self) -> Vec<ksni::menu::MenuItem<Self>> {
-        use ksni::menu::{MenuItem, StandardItem};
+        use ksni::menu::{MenuItem, StandardItem, SubMenu};
 
         let mut items = vec![StandardItem {
             label: "New note".into(),
@@ -113,20 +115,33 @@ impl ksni::Tray for ZpadTray {
         }
         .into()];
 
-        let snapshot: Vec<TrayNote> = match self.notes.lock() {
+        let mut snapshot: Vec<TrayNote> = match self.notes.lock() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
+        // Newest first: the notes the user touched most recently are the
+        // ones they want to reach without digging.
+        snapshot.sort_by_key(|note| std::cmp::Reverse(note.mtime));
+
+        // The flat list stays short — at most MAX_FLAT entries; everything
+        // older folds into an "Older notes" submenu.
+        const MAX_FLAT: usize = 10;
         if !snapshot.is_empty() {
             items.push(MenuItem::Separator);
-            for note in snapshot {
-                let marker = if note.visible { "● " } else { "○ " };
+            for note in snapshot.iter().take(MAX_FLAT) {
+                items.push(Self::note_item(note.clone()));
+            }
+            if snapshot.len() > MAX_FLAT {
+                let older: Vec<MenuItem<Self>> = snapshot
+                    .iter()
+                    .skip(MAX_FLAT)
+                    .cloned()
+                    .map(Self::note_item)
+                    .collect();
                 items.push(
-                    StandardItem {
-                        label: format!("{}{}", marker, note.title.replace('_', "__")),
-                        activate: Box::new(move |tray: &mut Self| {
-                            tray.run_action_with_id("show-note", note.id)
-                        }),
+                    SubMenu {
+                        label: format!("Older notes ({})", snapshot.len() - MAX_FLAT),
+                        submenu: older,
                         ..Default::default()
                     }
                     .into(),
@@ -177,6 +192,24 @@ impl ksni::Tray for ZpadTray {
             .into(),
         );
         items
+    }
+}
+
+impl ZpadTray {
+    /// One clickable entry that surfaces just that note. Takes ownership of
+    /// a clone because the activate closure must live independently of the
+    /// caller's snapshot.
+    fn note_item(note: TrayNote) -> ksni::menu::MenuItem<Self> {
+        use ksni::menu::StandardItem;
+        let marker = if note.visible { "● " } else { "○ " };
+        StandardItem {
+            label: format!("{}{}", marker, note.title.replace('_', "__")),
+            activate: Box::new(move |tray: &mut Self| {
+                tray.run_action_with_id("show-note", note.id)
+            }),
+            ..Default::default()
+        }
+        .into()
     }
 }
 

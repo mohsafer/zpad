@@ -26,6 +26,12 @@ pub struct NoteWindow {
     find_revealer: gtk::Revealer,
     search_entry: gtk::SearchEntry,
     autohide: Cell<bool>,
+    /// Poll timer for the bar-zone reveal (autohide mode only).
+    hover_poll: RefCell<Option<glib::SourceId>>,
+    /// Sticky hysteresis: once revealed via the strip, the bar stays up
+    /// while the pointer remains anywhere on it, even mid-animation when
+    /// the strip is briefly covered.
+    pointer_in_bar: Cell<bool>,
     /// True once the user has typed anything in this note (even if they
     /// then deleted it — clearing an existing note must persist the clear).
     ever_dirty: Cell<bool>,
@@ -162,39 +168,66 @@ impl NoteWindow {
             find_revealer,
             search_entry,
             autohide,
+            hover_poll: RefCell::new(None),
+            pointer_in_bar: Cell::new(false),
             ever_dirty: Cell::new(false),
             pending_save: RefCell::new(None),
         });
 
-        // Hover reveals the bar only while autohide is enabled.
-        let motion = gtk::EventControllerMotion::new();
+        // Bar reveal: while autohide is on, poll the pointer every 150 ms.
+        // The bar exists only while the pointer sits in the bottom strip
+        // (or on the bar itself); hovering the note body hides it. Polling
+        // is deliberate — enter/leave events misbehave around the overlay
+        // animation, and 6 wake-ups/second per open note is negligible.
         {
             let weak_this = Rc::downgrade(&this);
-            motion.connect_enter(move |_, _, _| {
-                if let Some(this) = weak_this.upgrade() {
-                    if this.autohide.get() {
-                        this.revealer.set_reveal_child(true);
+            let source = glib::timeout_add_local(
+                std::time::Duration::from_millis(150),
+                move || {
+                    let Some(this) = weak_this.upgrade() else {
+                        return glib::ControlFlow::Break;
+                    };
+                    if !this.autohide.get() || !this.revealer.is_visible() {
+                        return glib::ControlFlow::Continue;
                     }
-                }
-            });
-        }
-        {
-            let weak_this = Rc::downgrade(&this);
-            motion.connect_leave(move |_| {
-                if let Some(this) = weak_this.upgrade() {
-                    if this.autohide.get() {
-                        this.revealer.set_reveal_child(false);
+                    let (_px, py) = match this.window.surface() {
+                        Some(surface) => {
+                            let seat = gtk::prelude::RootExt::display(&this.window)
+                                .default_seat();
+                            match seat
+                                .and_then(|seat| surface.device_position(seat.pointer().as_ref()?))
+                            {
+                                Some((x, y, _)) => (x, y),
+                                None => return glib::ControlFlow::Continue,
+                            }
+                        }
+                        None => return glib::ControlFlow::Continue,
+                    };
+                    let bar_height = this.revealer.height() as f64;
+                    let zone_height = 10.0_f64;
+                    let inside = py >= this.window.height() as f64 - zone_height
+                        || (this.revealer.reveals_child() && py >= this.window.height() as f64 - bar_height);
+                    if inside != this.pointer_in_bar.get() {
+                        this.pointer_in_bar.set(inside);
+                        this.revealer.set_reveal_child(inside);
                     }
-                }
-            });
+                    glib::ControlFlow::Continue
+                },
+            );
+            *this.hover_poll.borrow_mut() = Some(source);
         }
-        this.window.add_controller(motion);
 
-        // Tool bar actions — all operate on this note's own buffer.
+        // Tool bar actions — all operate on this note's own buffer. Cut,
+        // paste, undo, and redo mutate the buffer directly, so unlike
+        // Ctrl+X/Ctrl+V (which respect the TextView's editable flag) they
+        // must honor read-only mode themselves.
         {
             let weak_this = Rc::downgrade(&this);
             cut_button.connect_clicked(move |_| {
                 if let Some(this) = weak_this.upgrade() {
+                    if !this.view.is_editable() {
+                        return;
+                    }
                     let clipboard = this.view.display().clipboard();
                     this.buffer.cut_clipboard(&clipboard, true);
                 }
@@ -213,6 +246,9 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(&this);
             paste_button.connect_clicked(move |_| {
                 if let Some(this) = weak_this.upgrade() {
+                    if !this.view.is_editable() {
+                        return;
+                    }
                     let clipboard = this.view.display().clipboard();
                     this.buffer
                         .paste_clipboard(&clipboard, None::<&gtk::TextIter>, true);
@@ -223,6 +259,9 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(&this);
             undo_button.connect_clicked(move |_| {
                 if let Some(this) = weak_this.upgrade() {
+                    if !this.view.is_editable() {
+                        return;
+                    }
                     this.buffer.undo();
                 }
             });
@@ -231,6 +270,9 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(&this);
             redo_button.connect_clicked(move |_| {
                 if let Some(this) = weak_this.upgrade() {
+                    if !this.view.is_editable() {
+                        return;
+                    }
                     this.buffer.redo();
                 }
             });
