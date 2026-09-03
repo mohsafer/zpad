@@ -15,10 +15,10 @@ mod tray;
 
 use std::rc::Rc;
 
-use gtk4 as gtk;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use app::ZpadState;
 
@@ -74,9 +74,7 @@ popover.background.menu modelbutton {
 ";
 
 fn main() -> glib::ExitCode {
-    let app = gtk::Application::builder()
-        .application_id(APP_ID)
-        .build();
+    let app = gtk::Application::builder().application_id(APP_ID).build();
 
     let state = ZpadState::new(app.clone());
 
@@ -86,6 +84,23 @@ fn main() -> glib::ExitCode {
             state.install_styles();
         }
     });
+
+    // Logout and `systemctl --user stop zpad` deliver SIGTERM, which would
+    // otherwise kill the process mid-debounce and lose the last second of
+    // typing. Route it through the same path as Quit (flush + clean exit).
+    // SIGINT (Ctrl+C) is covered by GTK's own handling; re-raising via the
+    // default handler keeps `quit()` from running twice.
+    {
+        let weak_state = Rc::downgrade(&state);
+        app.connect_startup(move |_| {
+            let weak_state = weak_state.clone();
+            glib::unix_signal_add_local_once(libc::SIGTERM, move || {
+                if let Some(state) = weak_state.upgrade() {
+                    state.quit();
+                }
+            });
+        });
+    }
 
     // activate fires on the primary instance for the very first launch AND
     // for every repeat invocation; ZpadState turns repeats into quick capture.
@@ -132,8 +147,7 @@ fn main() -> glib::ExitCode {
     app.add_action(&hide_notes);
 
     // Parameterized: the tray menu's per-note entries pick one note by id.
-    let show_note =
-        gio::SimpleAction::new("show-note", Some(u64::static_variant_type().as_ref()));
+    let show_note = gio::SimpleAction::new("show-note", Some(u64::static_variant_type().as_ref()));
     {
         let weak_state = Rc::downgrade(&state);
         show_note.connect_activate(move |_, parameter| {

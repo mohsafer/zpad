@@ -5,10 +5,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gtk4 as gtk;
-use gtk::glib;
 use gtk::gio;
+use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use crate::app::ZpadState;
 use crate::config::Config;
@@ -181,9 +181,8 @@ impl NoteWindow {
         // animation, and 6 wake-ups/second per open note is negligible.
         {
             let weak_this = Rc::downgrade(&this);
-            let source = glib::timeout_add_local(
-                std::time::Duration::from_millis(150),
-                move || {
+            let source =
+                glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
                     let Some(this) = weak_this.upgrade() else {
                         return glib::ControlFlow::Break;
                     };
@@ -192,8 +191,7 @@ impl NoteWindow {
                     }
                     let (_px, py) = match this.window.surface() {
                         Some(surface) => {
-                            let seat = gtk::prelude::RootExt::display(&this.window)
-                                .default_seat();
+                            let seat = gtk::prelude::RootExt::display(&this.window).default_seat();
                             match seat
                                 .and_then(|seat| surface.device_position(seat.pointer().as_ref()?))
                             {
@@ -206,14 +204,14 @@ impl NoteWindow {
                     let bar_height = this.revealer.height() as f64;
                     let zone_height = 10.0_f64;
                     let inside = py >= this.window.height() as f64 - zone_height
-                        || (this.revealer.reveals_child() && py >= this.window.height() as f64 - bar_height);
+                        || (this.revealer.reveals_child()
+                            && py >= this.window.height() as f64 - bar_height);
                     if inside != this.pointer_in_bar.get() {
                         this.pointer_in_bar.set(inside);
                         this.revealer.set_reveal_child(inside);
                     }
                     glib::ControlFlow::Continue
-                },
-            );
+                });
             *this.hover_poll.borrow_mut() = Some(source);
         }
 
@@ -359,7 +357,6 @@ impl NoteWindow {
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
     }
-
 
     pub fn hide(&self) {
         self.window.set_visible(false);
@@ -534,8 +531,7 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(this);
             let weak_state = Rc::downgrade(state);
             this.buffer.connect_changed(move |_| {
-                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade())
-                else {
+                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade()) else {
                     return;
                 };
                 this.ever_dirty.set(true);
@@ -564,8 +560,7 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(this);
             let weak_state = Rc::downgrade(state);
             this.window.connect_close_request(move |_| {
-                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade())
-                else {
+                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade()) else {
                     return glib::Propagation::Proceed;
                 };
                 this.flush_save(&state);
@@ -616,8 +611,7 @@ impl NoteWindow {
             let weak_this = Rc::downgrade(this);
             let weak_state = Rc::downgrade(state);
             delete_button.connect_clicked(move |_| {
-                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade())
-                else {
+                let (Some(this), Some(state)) = (weak_this.upgrade(), weak_state.upgrade()) else {
                     return;
                 };
                 if state.config().confirm_delete {

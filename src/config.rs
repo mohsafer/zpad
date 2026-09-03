@@ -13,10 +13,6 @@ pub struct Config {
     pub autohide_toolbar: bool,
     pub show_scrollbar: bool,
     pub show_decorations: bool,
-    /// Stored for future X11 support; inert on Wayland (compositor-owned).
-    pub show_on_all_workspaces: bool,
-    pub hide_from_taskbar: bool,
-    pub hide_from_pager: bool,
 
     // layout
     /// When false, `font_family` (a Pango description like "Sans 9") applies.
@@ -47,6 +43,11 @@ pub struct Config {
 
     // legacy fields kept so old config files still parse cleanly
     pub notes_on_all_workspaces: bool,
+    /// Inert: no code applies these (they were Wayland-owned anyway). Kept so
+    /// old config files still parse; will be dropped with a major version.
+    pub show_on_all_workspaces: bool,
+    pub hide_from_taskbar: bool,
+    pub hide_from_pager: bool,
 }
 
 impl Config {
@@ -107,12 +108,4 @@ fn config_path() -> PathBuf {
         }
     };
     base.join("zpad").join("config.toml")
-}
-
-/// The three window-management switches the compositor owns on Wayland.
-/// They stay visible (greyed) so the layout matches expectations, but the
-/// tooltip explains why they cannot work here.
-pub fn wayland_window_controls() -> bool {
-    matches!(std::env::var("XDG_SESSION_TYPE").as_deref(), Ok("wayland"))
-        || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }

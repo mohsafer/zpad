@@ -11,9 +11,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 /// One note as seen by the tray menu.
 #[derive(Clone, Debug)]
@@ -222,9 +222,7 @@ pub fn spawn(
     if wait_systray {
         // "Wait for systray (if possible)": tolerate starting before the
         // desktop shell has published its StatusNotifierWatcher.
-        ZpadTray::new(app, notes)
-            .assume_sni_available(true)
-            .spawn()
+        ZpadTray::new(app, notes).assume_sni_available(true).spawn()
     } else {
         ZpadTray::new(app, notes).spawn()
     }

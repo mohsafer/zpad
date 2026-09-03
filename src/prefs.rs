@@ -9,10 +9,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4 as gtk;
+use gtk::gdk;
 use gtk::glib;
-use gtk::gdk as gdk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use crate::app::ZpadState;
 use crate::config::Config;
@@ -59,11 +59,26 @@ fn build(state: &Rc<ZpadState>) -> gtk::Window {
         .build();
 
     let notebook = gtk::Notebook::new();
-    notebook.append_page(&view_page(state, &cfg), Some(&gtk::Label::new(Some("View"))));
-    notebook.append_page(&layout_page(state, &cfg), Some(&gtk::Label::new(Some("Layout"))));
-    notebook.append_page(&startup_page(state, &cfg), Some(&gtk::Label::new(Some("Startup"))));
-    notebook.append_page(&tray_page(state, &cfg), Some(&gtk::Label::new(Some("Tray"))));
-    notebook.append_page(&other_page(state, &cfg), Some(&gtk::Label::new(Some("Other"))));
+    notebook.append_page(
+        &view_page(state, &cfg),
+        Some(&gtk::Label::new(Some("View"))),
+    );
+    notebook.append_page(
+        &layout_page(state, &cfg),
+        Some(&gtk::Label::new(Some("Layout"))),
+    );
+    notebook.append_page(
+        &startup_page(state, &cfg),
+        Some(&gtk::Label::new(Some("Startup"))),
+    );
+    notebook.append_page(
+        &tray_page(state, &cfg),
+        Some(&gtk::Label::new(Some("Tray"))),
+    );
+    notebook.append_page(
+        &other_page(state, &cfg),
+        Some(&gtk::Label::new(Some("Other"))),
+    );
 
     let outer = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -110,11 +125,7 @@ fn check(label: &str, active: bool) -> gtk::CheckButton {
     button
 }
 
-fn wire_check(
-    state: &Rc<ZpadState>,
-    button: &gtk::CheckButton,
-    set: fn(&mut Config, bool),
-) {
+fn wire_check(state: &Rc<ZpadState>, button: &gtk::CheckButton, set: fn(&mut Config, bool)) {
     let weak_state = Rc::downgrade(state);
     button.connect_toggled(move |button| {
         let Some(state) = weak_state.upgrade() else {
@@ -149,7 +160,11 @@ fn wire_combo(
         let Some(state) = weak_state.upgrade() else {
             return;
         };
-        if let Some(i) = combo.active().map(|i| i as usize).filter(|&i| i < values.len()) {
+        if let Some(i) = combo
+            .active()
+            .map(|i| i as usize)
+            .filter(|&i| i < values.len())
+        {
             let value = values[i].to_string();
             state.update_config(|config| set(config, &value));
         }
@@ -169,9 +184,6 @@ fn rgba_hex(color: &gdk::RGBA) -> String {
 
 fn view_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
     let box_ = page_box();
-    let wayland_locked = crate::config::wayland_window_controls();
-    let wayland_tip =
-        "Not available on Wayland — the compositor owns this.\nUse a KWin window rule if you need it.";
 
     let show_toolbar = check("Show toolbar", cfg.show_toolbar);
     let autohide = check("Autohide toolbar", cfg.autohide_toolbar);
@@ -182,23 +194,6 @@ fn view_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
     box_.append(&autohide);
     box_.append(&show_scrollbar);
     box_.append(&decorations);
-
-    box_.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    for (label, value) in [
-        ("Show notes on all workspaces", cfg.show_on_all_workspaces),
-        ("Hide all notes from the taskbar and possibly the task switcher", cfg.hide_from_taskbar),
-        (
-            "Hide all notes from the workspace switcher and possibly the task switcher",
-            cfg.hide_from_pager,
-        ),
-    ] {
-        let row = check(label, value);
-        if wayland_locked {
-            row.set_sensitive(false);
-            row.set_tooltip_text(Some(wayland_tip));
-        }
-        box_.append(&row);
-    }
 
     {
         let weak_state = Rc::downgrade(state);
@@ -215,7 +210,9 @@ fn view_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
         });
     }
     wire_check(state, &autohide, |config, v| config.autohide_toolbar = v);
-    wire_check(state, &show_scrollbar, |config, v| config.show_scrollbar = v);
+    wire_check(state, &show_scrollbar, |config, v| {
+        config.show_scrollbar = v
+    });
     wire_check(state, &decorations, |config, v| config.show_decorations = v);
 
     box_.upcast()
@@ -250,10 +247,14 @@ fn layout_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
     box_.append(&colors_theme);
     box_.append(&colors_custom);
 
-    let text_color = gtk::ColorButton::with_rgba(&gdk::RGBA::parse(&cfg.custom_text)
-        .unwrap_or_else(|_| gdk::RGBA::new(0.12, 0.11, 0.0, 1.0)));
-    let bg_color = gtk::ColorButton::with_rgba(&gdk::RGBA::parse(&cfg.custom_background)
-        .unwrap_or_else(|_| gdk::RGBA::new(1.0, 0.98, 0.77, 1.0)));
+    let text_color = gtk::ColorButton::with_rgba(
+        &gdk::RGBA::parse(&cfg.custom_text)
+            .unwrap_or_else(|_| gdk::RGBA::new(0.12, 0.11, 0.0, 1.0)),
+    );
+    let bg_color = gtk::ColorButton::with_rgba(
+        &gdk::RGBA::parse(&cfg.custom_background)
+            .unwrap_or_else(|_| gdk::RGBA::new(1.0, 0.98, 0.77, 1.0)),
+    );
     let colors_grid = gtk::Grid::builder()
         .column_spacing(12)
         .row_spacing(8)
@@ -474,12 +475,9 @@ fn tray_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
             }
         });
     }
-    wire_combo(
-        state,
-        &click,
-        &["toggle", "show-all"],
-        |config, v| config.tray_click = v.to_string(),
-    );
+    wire_combo(state, &click, &["toggle", "show-all"], |config, v| {
+        config.tray_click = v.to_string()
+    });
 
     box_.upcast()
 }
@@ -500,7 +498,9 @@ fn other_page(state: &Rc<ZpadState>, cfg: &Config) -> gtk::Widget {
     box_.append(&line_numbers);
 
     wire_check(state, &read_only, |config, v| config.read_only = v);
-    wire_check(state, &confirm_delete, |config, v| config.confirm_delete = v);
+    wire_check(state, &confirm_delete, |config, v| {
+        config.confirm_delete = v
+    });
 
     box_.upcast()
 }

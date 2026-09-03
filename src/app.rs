@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use crate::config::Config;
 use crate::note::NoteWindow;
@@ -49,7 +49,9 @@ fn dynamic_css(config: &Config) -> String {
         }
         let family = parts.join(" ");
         if !family.is_empty() {
-            css.push_str(&format!(".zpad-note textview {{ font-family: \"{family}\";"));
+            css.push_str(&format!(
+                ".zpad-note textview {{ font-family: \"{family}\";"
+            ));
             if !size.is_empty() {
                 css.push_str(&format!(" font-size: {size}pt;"));
             }
@@ -184,7 +186,12 @@ impl ZpadState {
         };
         snapshot.clear();
         for (id, mtime, title) in self.store.list_note_index() {
-            snapshot.push(TrayNote { id, title, visible: false, mtime });
+            snapshot.push(TrayNote {
+                id,
+                title,
+                visible: false,
+                mtime,
+            });
         }
         for window in self.windows.borrow().values() {
             let (id, title, visible) = window.tray_entry();
@@ -194,7 +201,12 @@ impl ZpadState {
                 note.visible = visible;
                 note.mtime = mtime;
             } else {
-                snapshot.push(TrayNote { id, title, visible, mtime });
+                snapshot.push(TrayNote {
+                    id,
+                    title,
+                    visible,
+                    mtime,
+                });
             }
         }
     }
@@ -399,15 +411,29 @@ impl ZpadState {
             config.startup_delay_secs,
             config.startup_delay_secs
         );
-        if let Err(err) = std::fs::write(&path, entry) {
+        if let Err(err) = crate::storage::atomic_write(&path, entry.as_bytes()) {
             eprintln!("zpad: cannot write autostart entry: {err}");
         }
     }
 
-    /// Tray left-click: quick capture — one new empty note, like running
-    /// `zpad` again. Saved notes are never dumped onto the desktop.
+    /// Tray left-click, per the "Tray left mouse click behavior" preference:
+    /// "toggle" (default) flips all notes between shown and hidden, "show-all"
+    /// always surfaces them. With no notes open either path starts one.
     pub fn tray_activate(self: &Rc<Self>) {
-        self.new_note();
+        if self.config().tray_click == "show-all" {
+            self.show_all_notes();
+            return;
+        }
+        let any_visible = self
+            .windows
+            .borrow()
+            .values()
+            .any(|window| window.is_visible());
+        if any_visible {
+            self.hide_all_notes();
+        } else {
+            self.show_all_notes();
+        }
     }
 
     /// Ctrl+J: flip read-only mode for every note.
@@ -479,7 +505,13 @@ impl ZpadState {
         self.app.quit();
     }
 
-    fn open_note(self: &Rc<Self>, id: u64, text: String, width: i32, height: i32) -> Rc<NoteWindow> {
+    fn open_note(
+        self: &Rc<Self>,
+        id: u64,
+        text: String,
+        width: i32,
+        height: i32,
+    ) -> Rc<NoteWindow> {
         let window = NoteWindow::new(self, id, text, width, height);
         self.windows.borrow_mut().insert(id, window.clone());
         window.present();

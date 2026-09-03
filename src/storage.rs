@@ -59,9 +59,8 @@ impl Store {
                 }
             }
             _ => {
-                let home = std::env::var_os("HOME").ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "HOME is not set")
-                })?;
+                let home = std::env::var_os("HOME")
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
                 PathBuf::from(home).join(".local").join("share")
             }
         };
@@ -238,9 +237,8 @@ impl Store {
                 .map(|(&id, &(width, height))| NoteGeom { id, width, height })
                 .collect(),
         };
-        let raw = toml::to_string(&state).map_err(|err| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("toml: {err}"))
-        })?;
+        let raw = toml::to_string(&state)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("toml: {err}")))?;
         atomic_write(&self.base.join(STATE_FILE), raw.as_bytes())
     }
 }
@@ -289,10 +287,7 @@ mod tests {
         fn new() -> Self {
             static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "zpad-test-{}-{n}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir().join(format!("zpad-test-{}-{n}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             TempDir(path)
         }
@@ -309,7 +304,13 @@ mod tests {
         let store = Store::new(tmp.0.clone());
         store.save_note(1, "hello\nworld\n").unwrap();
         let notes = store.load_notes().unwrap();
-        assert_eq!(notes, vec![NoteFile { id: 1, text: "hello\nworld\n".into() }]);
+        assert_eq!(
+            notes,
+            vec![NoteFile {
+                id: 1,
+                text: "hello\nworld\n".into()
+            }]
+        );
     }
 
     #[test]
